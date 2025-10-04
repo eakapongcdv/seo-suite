@@ -33,12 +33,7 @@ async function getData(projectId: string) {
     include: {
       pages: {
         orderBy: [{ sortNumber: "asc" }, { updatedAt: "desc" }],
-        select: {
-          id: true, sortNumber: true, pageName: true, pageUrl: true,
-          pageSeoKeywords: true, pageContentKeywords: true, pageMetaDescription: true,
-          figmaNodeId: true, figmaCaptureUrl: true, figmaCapturedAt: true, figmaTextContent: true,
-          lighthouseSeo: true, updatedAt: true,
-        },
+        // อย่าใส่ select เพื่อให้ได้ครบทุกฟิลด์ที่ PageRow ใช้
       },
     },
   });
@@ -92,7 +87,9 @@ export default async function ProjectEditor({ params }: { params: Params }) {
             <p className="text-gray-500">No pages yet. Add your first page to get started.</p>
           </div>
         ) : (
-          data.pages.map((pg) => <PageRow key={pg.id} pg={pg as any} projectId={data.id} />)
+          data.pages.map((pg) => (
+            <PageRow key={pg.id} projectId={data.id} page={pg} />
+          ))
         )}
       </div>
     </div>

@@ -1,4 +1,6 @@
 // app/app/projects/[projectid]/actions.ts
+"use server";
+
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
@@ -48,20 +50,71 @@ export async function updatePageAction(formData: FormData) {
   const ok = await ensureOwner(projectId);
   if (!ok) throw new Error("Unauthorized");
 
-  const pageName = (formData.get("pageName") as string | null)?.toString().trim();
-  const pageUrl = (formData.get("pageUrl") as string | null)?.toString().trim();
+  // ----- Basic fields
+  const pageName = formData.get("pageName");
+  const pageUrl = formData.get("pageUrl");
   const sortRaw = formData.get("sortNumber");
-  const sortNumber = sortRaw !== null ? (Number(sortRaw) || 0) : undefined;
 
-  await prisma.page.update({
-    where: { id },
-    data: {
-      ...(pageName !== undefined ? { pageName } : {}),
-      ...(pageUrl !== undefined ? { pageUrl } : {}),
-      ...(sortNumber !== undefined ? { sortNumber } : {}),
-    },
-  });
+  // ----- Meta / Summary
+  const pageDescriptionSummary = formData.get("pageDescriptionSummary");
+  const pageMetaDescription = formData.get("pageMetaDescription");
 
+  // ----- SEO keywords (comma/newline separated)
+  const pageSeoKeywordsRaw = formData.get("pageSeoKeywords");
+
+  // ----- Lighthouse scores (0–100)
+  const lighthouseSeo = formData.get("lighthouseSeo");
+  const lighthousePerf = formData.get("lighthousePerf");
+  const lighthouseAccessibility = formData.get("lighthouseAccessibility");
+
+  // สร้าง payload แบบเลือกเติมเฉพาะฟิลด์ที่ถูกส่งมา
+  const data: any = {};
+
+  if (pageName !== null) data.pageName = String(pageName).trim();
+  if (pageUrl !== null) data.pageUrl = String(pageUrl).trim();
+
+  if (sortRaw !== null) {
+    data.sortNumber = Number(sortRaw);
+    if (Number.isNaN(data.sortNumber)) data.sortNumber = 0;
+  }
+
+  if (pageDescriptionSummary !== null) {
+    const v = String(pageDescriptionSummary).trim();
+    data.pageDescriptionSummary = v || null;
+  }
+
+  if (pageMetaDescription !== null) {
+    const v = String(pageMetaDescription).trim();
+    data.pageMetaDescription = v || null;
+  }
+
+  if (pageSeoKeywordsRaw !== null) {
+    const raw = String(pageSeoKeywordsRaw);
+    const arr = raw
+      .split(/[,;\n]/g)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    // unique
+    data.pageSeoKeywords = Array.from(new Set(arr));
+  }
+
+  // helper clamp
+  const clamp100 = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+
+  if (lighthouseSeo !== null) {
+    const n = Number(lighthouseSeo);
+    data.lighthouseSeo = Number.isNaN(n) ? null : clamp100(n);
+  }
+  if (lighthousePerf !== null) {
+    const n = Number(lighthousePerf);
+    data.lighthousePerf = Number.isNaN(n) ? null : clamp100(n);
+  }
+  if (lighthouseAccessibility !== null) {
+    const n = Number(lighthouseAccessibility);
+    data.lighthouseAccessibility = Number.isNaN(n) ? null : clamp100(n);
+  }
+
+  await prisma.page.update({ where: { id }, data });
   revalidatePath(`/app/projects/${projectId}`);
 }
 
@@ -73,7 +126,6 @@ export async function deletePageAction(formData: FormData) {
   if (!ok) throw new Error("Unauthorized");
 
   await prisma.page.delete({ where: { id } });
-
   revalidatePath(`/app/projects/${projectId}`);
 }
 
@@ -87,8 +139,11 @@ export async function syncFigmaAction(formData: FormData) {
   const ok = await ensureOwner(projectId);
   if (!ok) throw new Error("Unauthorized");
 
+  // รองรับหลาย node คั่น comma (ใช้ node แรกเป็นหลักสำหรับ text/keywords)
   const nodeIds = figmaNodeIdRaw.split(",").map((s) => s.trim()).filter(Boolean);
   const primaryId = nodeIds[0];
+
+  // normalize/dash ทั้งสองแบบเผื่อ response key ไม่ตรง
   const normalizedPrimaryId =
     primaryId.includes("-") && !primaryId.includes(":") ? primaryId.replace("-", ":") : primaryId;
 
@@ -97,6 +152,11 @@ export async function syncFigmaAction(formData: FormData) {
   const captureUrl =
     imagesMap[normalizedPrimaryId] || imagesMap[dashedPrimaryId] || imagesMap[primaryId] || "";
 
+  // เพิ่ม log ตามที่ขอ
+  console.log("[SYNC] Figma imagesMap:", imagesMap);
+  console.log("[SYNC] captureUrl selected:", captureUrl);
+
+  // TEXT & keywords ใช้ node แรก
   const doc = await getFigmaNodeDocument(primaryId);
   const text = doc ? collectTextFromNode(doc) : "";
   const keywords = text ? extractKeywordsSimple(text, 30) : [];
@@ -132,11 +192,9 @@ export async function recommendSeoKeywordsAction(formData: FormData) {
   });
   if (!page) throw new Error("Page not found");
 
-  // เตรียม context
   const baseText = (page.figmaTextContent || "").slice(0, 6000);
   const seed = (page.pageContentKeywords || []).slice(0, 50);
 
-  // ถ้าไม่มีข้อความเลย ให้ fallback เป็น seed -> แยกกรองเล็กน้อย
   if (!baseText && seed.length === 0) {
     await prisma.page.update({
       where: { id: pageId },
@@ -146,7 +204,6 @@ export async function recommendSeoKeywordsAction(formData: FormData) {
     return;
   }
 
-  // เรียก OpenAI (ต้องตั้ง OPENAI_API_KEY ใน .env)
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
   const prompt = [
@@ -176,14 +233,15 @@ export async function recommendSeoKeywordsAction(formData: FormData) {
     });
 
     const raw = chat.choices?.[0]?.message?.content || "[]";
-    // ป้องกันเผลอมี text อื่นปน
     const jsonStart = raw.indexOf("[");
     const jsonEnd = raw.lastIndexOf("]");
     const jsonSafe = jsonStart >= 0 && jsonEnd >= 0 ? raw.slice(jsonStart, jsonEnd + 1) : "[]";
     const parsed = JSON.parse(jsonSafe);
-    recs = Array.isArray(parsed) ? parsed.map((s: any) => String(s).trim().toLowerCase()).filter(Boolean) : [];
-  } catch (e) {
-    // fallback: ถ้าพัง ใช้ seed + คำเด่นจากข้อความ
+    recs = Array.isArray(parsed)
+      ? parsed.map((s: any) => String(s).trim().toLowerCase()).filter(Boolean)
+      : [];
+  } catch {
+    // fallback: seed + คำเด่นจากข้อความ
     const fromSeed = seed.slice(0, 10);
     const extra = extractKeywordsSimple(baseText, 10);
     recs = Array.from(new Set([...fromSeed, ...extra])).slice(0, 20);

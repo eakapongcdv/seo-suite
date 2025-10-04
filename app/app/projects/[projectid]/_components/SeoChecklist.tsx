@@ -23,30 +23,30 @@ type Props =
 
 /** สร้างรายการเช็คจากสคีมล่าสุด (derive จากฟิลด์ใน Page) */
 function buildItemsFromPage(p: PageLike): ChecklistItem[] {
-  const hasMeta = !!p.pageMetaDescription?.trim();
-  const hasContentKW = (p.pageContentKeywords?.length ?? 0) > 0;
-  const hasSeoKW = (p.pageSeoKeywords?.length ?? 0) > 0;
-  const hasFigmaCapture = !!p.figmaCaptureUrl;
-  const hasFigmaText = !!p.figmaTextContent?.trim();
+  const hasMeta = !!p?.pageMetaDescription?.trim();
+  const hasContentKW = (p?.pageContentKeywords?.length ?? 0) > 0;
+  const hasSeoKW = (p?.pageSeoKeywords?.length ?? 0) > 0;
+  const hasFigmaCapture = !!p?.figmaCaptureUrl;
+  const hasFigmaText = !!p?.figmaTextContent?.trim();
 
   // คุณภาพ URL ง่าย ๆ: เริ่มด้วย "/" หรือ "http"
-  const urlOk = !!p.pageUrl && (p.pageUrl.startsWith("/") || p.pageUrl.startsWith("http"));
+  const urlOk = !!p?.pageUrl && (p?.pageUrl.startsWith("/") || p?.pageUrl.startsWith("http"));
 
   // Lighthouse: นับว่า “มีผล” ถ้ามีค่า (จะดีมากถ้า >= 80 แต่ยังถือว่า “มี” ก่อน)
-  const hasLhPerf = typeof p.lighthousePerf === "number";
-  const hasLhSeo = typeof p.lighthouseSeo === "number";
-  const hasLhA11y = typeof p.lighthouseAccessibility === "number";
+  const hasLhPerf = typeof p?.lighthousePerf === "number";
+  const hasLhSeo = typeof p?.lighthouseSeo === "number";
+  const hasLhA11y = typeof p?.lighthouseAccessibility === "number";
 
   // ความสอดคล้องเบื้องต้น: มี keyword ทับซ้อนระหว่าง content กับ seo
   const overlapOk = (() => {
-    const a = new Set((p.pageContentKeywords || []).map((s) => s.toLowerCase()));
-    const b = new Set((p.pageSeoKeywords || []).map((s) => s.toLowerCase()));
+    const a = new Set((p?.pageContentKeywords || []).map((s) => s.toLowerCase()));
+    const b = new Set((p?.pageSeoKeywords || []).map((s) => s.toLowerCase()));
     for (const k of a) if (b.has(k)) return true;
     return false;
   })();
 
   return [
-    { ok: !!p.pageName?.trim(), label: "Page name set" },
+    { ok: !!p?.pageName?.trim(), label: "Page name set" },
     { ok: urlOk, label: "Valid page URL" },
     { ok: hasMeta, label: "Meta description present" },
     { ok: hasContentKW, label: "Content keywords extracted" },
