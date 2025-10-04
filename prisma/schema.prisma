@@ -56,47 +56,184 @@ model VerificationToken {
 }
 
 model Project {
-  id           String   @id @default(cuid())
+  id           String  @id @default(cuid())
   ownerId      String
   siteName     String
   siteUrl      String
-  targetLocale String   @default("en")
-  includeBaidu Boolean  @default(false)
+  targetLocale String  @default("en")
+  includeBaidu Boolean @default(false)
+
   pages        Page[]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  integrations ProjectIntegration[]
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  RankKeyword RankKeyword[]
 }
 
+//
+// ---------- CONTENT / PAGES ----------
 model Page {
-  id                      String   @id @default(cuid())
-  projectId               String
-  pageName                String
-  pageUrl                 String
-  pageDescriptionSummary  String?
-  pageContentKeywords     String[] @default([])   // สรุปคีย์เวิร์ดจากคอนเทนต์
-  pageMetaDescription     String?
-  pageSeoKeywords         String[] @default([])
+  id                     String   @id @default(cuid())
+  projectId              String
+  pageName               String
+  pageUrl                String
+  pageDescriptionSummary String?
+  pageContentKeywords    String[] @default([]) // Extracted content keywords
+  pageMetaDescription    String?
+  pageSeoKeywords        String[] @default([])
 
   // --- Ordering ---
-  sortNumber              Int      @default(0)    // ใช้เรียงหน้า (น้อยก่อน)
+  sortNumber Int @default(0)
 
   // --- Figma Sync fields ---
-  figmaNodeId             String?
-  figmaCaptureUrl         String?                 // URL PNG ชั่วคราวจาก Figma /images
-  figmaCapturedAt         DateTime?               // เวลา sync ล่าสุด
-  figmaTextContent        String?  @db.Text       // ข้อความจาก TEXT nodes
+  figmaNodeId      String?
+  figmaCaptureUrl  String? // Temporary URL from Figma /images
+  figmaCapturedAt  DateTime?
+  figmaTextContent String?   @db.Text
 
-  // --- Lighthouse ---
+  // --- Lighthouse (optional aggregates) ---
   lighthousePerf          Int?
   lighthouseSeo           Int?
   lighthouseAccessibility Int?
 
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // --- On-page SEO checklist ---
+  seoTitlePresent             Boolean @default(false)
+  seoTitleLengthOk            Boolean @default(false) // e.g., 30–60 chars
+  seoH1Present                Boolean @default(false)
+  seoCanonicalPresent         Boolean @default(false)
+  seoCanonicalSelfReferential Boolean @default(false)
+  seoRobotsNoindex            Boolean @default(false) // true means blocked from index
+  seoSitemapIncluded          Boolean @default(false)
+  seoStructuredDataPresent    Boolean @default(false)
+  seoHreflangValid            Boolean @default(false)
+  seoMobileFriendly           Boolean @default(false)
+
+  seoWordCount          Int?
+  seoAltTextCoveragePct Int? // 0–100
+  seoInternalLinks      Int?
+  seoExternalLinks      Int?
+
+  // --- Core Web Vitals (field data if available) ---
+  cwvLcpMs Int?
+  cwvCls   Float?
+  cwvInpMs Int?
+
+  // --- Indexing / GSC (synced) ---
+  indexStatus    IndexStatus?
+  lastCrawledAt  DateTime?
+  gscImpressions Int?
+  gscClicks      Int?
+  gscCtrPct      Float?
+  gscAvgPosition Float?
+
+  // --- Rank tracking snapshot (optional mirror) ---
+  lastRankPosition  Int?
+  lastRankCheckedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  rankTargets RankKeyword[]
+  // @@unique([projectId, pageUrl])
 
   @@index([projectId])
-  @@index([projectId, sortNumber])                // ช่วย order/filter ตามโปรเจกต์+ลำดับ
-  // @@unique([projectId, pageUrl])               // เปิดใช้ถ้าต้องการกัน URL ซ้ำในโปรเจกต์เดียวกัน
+  @@index([projectId, sortNumber])
+}
+
+//
+// ---------- INTEGRATIONS (incl. FIGMA, GSC, Rank APIs) ----------
+enum IntegrationType {
+  GSC // Google Search Console
+  RANK_API // SerpAPI / DataForSEO / etc.
+  FIGMA // Store per-project Figma token/fileKey/config
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+model ProjectIntegration {
+  id          String            @id @default(cuid())
+  projectId   String
+  type        IntegrationType
+  status      IntegrationStatus @default(INACTIVE)
+  connectedAt DateTime?
+  connectedBy String? // user id
+  accountId   String? // link to next-auth Account.id if OAuth
+  propertyUri String? // e.g. GSC property URL or domain
+  config      Json? // { token, fileKey, format, scale } for FIGMA; vendor/secret refs for rank API
+  lastSyncAt  DateTime?
+  errorMsg    String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, type]) // ensure one integration type per project
+  @@index([projectId, type])
+}
+
+//
+// ---------- RANK TRACKING ----------
+enum SearchEngine {
+  google
+  bing
+  baidu
+}
+
+enum DeviceType {
+  desktop
+  mobile
+}
+
+model RankKeyword {
+  id           String       @id @default(cuid())
+  projectId    String
+  pageId       String?
+  keyword      String
+  locale       String // e.g., "en-US"
+  countryCode  String? // e.g., "US", "TH"
+  city         String?
+  searchEngine SearchEngine @default(google)
+  device       DeviceType   @default(mobile)
+  active       Boolean      @default(true)
+
+  lastPosition  Int?
+  lastCheckedAt DateTime?
+
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  page      Page?          @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  snapshots RankSnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, keyword])
+  @@index([pageId])
+}
+
+model RankSnapshot {
+  id            String   @id @default(cuid())
+  rankKeywordId String
+  position      Int?
+  url           String?
+  checkedAt     DateTime @default(now())
+  raw           Json? // raw payload from provider
+
+  keyword RankKeyword @relation(fields: [rankKeywordId], references: [id], onDelete: Cascade)
+
+  @@index([rankKeywordId, checkedAt])
+}
+
+//
+// ---------- ENUMS ----------
+enum IndexStatus {
+  indexed
+  discovered
+  crawled
+  excluded
+  unknown
 }
