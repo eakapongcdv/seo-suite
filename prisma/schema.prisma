@@ -78,11 +78,14 @@ model Page {
   pageMetaDescription     String?
   pageSeoKeywords         String[] @default([])
 
+  // --- Ordering ---
+  sortNumber              Int      @default(0)    // ใช้เรียงหน้า (น้อยก่อน)
+
   // --- Figma Sync fields ---
   figmaNodeId             String?
-  figmaCaptureUrl         String?                  // URL PNG ชั่วคราวจาก Figma /images
-  figmaCapturedAt         DateTime?                // เวลา sync ล่าสุด
-  figmaTextContent        String?  @db.Text        // ข้อความดึงจาก TEXT nodes
+  figmaCaptureUrl         String?                 // URL PNG ชั่วคราวจาก Figma /images
+  figmaCapturedAt         DateTime?               // เวลา sync ล่าสุด
+  figmaTextContent        String?  @db.Text       // ข้อความจาก TEXT nodes
 
   // --- Lighthouse ---
   lighthousePerf          Int?
@@ -94,5 +97,6 @@ model Page {
   project                 Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
-  // @@unique([projectId, pageUrl]) // เปิดใช้ถ้าต้องการกัน URL ช้ำในโปรเจกต์เดียวกัน
+  @@index([projectId, sortNumber])                // ช่วย order/filter ตามโปรเจกต์+ลำดับ
+  // @@unique([projectId, pageUrl])               // เปิดใช้ถ้าต้องการกัน URL ซ้ำในโปรเจกต์เดียวกัน
 }
