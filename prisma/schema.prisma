@@ -74,16 +74,25 @@ model Page {
   pageName                String
   pageUrl                 String
   pageDescriptionSummary  String?
-  pageContentKeywords     String[] @default([])
+  pageContentKeywords     String[] @default([])   // สรุปคีย์เวิร์ดจากคอนเทนต์
   pageMetaDescription     String?
   pageSeoKeywords         String[] @default([])
+
+  // --- Figma Sync fields ---
   figmaNodeId             String?
+  figmaCaptureUrl         String?                  // URL PNG ชั่วคราวจาก Figma /images
+  figmaCapturedAt         DateTime?                // เวลา sync ล่าสุด
+  figmaTextContent        String?  @db.Text        // ข้อความดึงจาก TEXT nodes
+
+  // --- Lighthouse ---
   lighthousePerf          Int?
   lighthouseSeo           Int?
   lighthouseAccessibility Int?
+
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   project                 Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
+  // @@unique([projectId, pageUrl]) // เปิดใช้ถ้าต้องการกัน URL ช้ำในโปรเจกต์เดียวกัน
 }
