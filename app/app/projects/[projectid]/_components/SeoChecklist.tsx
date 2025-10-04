@@ -60,8 +60,17 @@ function buildItemsFromPage(p: PageLike): ChecklistItem[] {
   ];
 }
 
+// Type guard ช่วยให้ TS รู้ว่า props มี page แน่นอน
+function isPageProps(p: Props): p is { page: PageLike; title?: string } {
+  // เช็คทั้ง key และค่าที่ไม่เป็น undefined
+  return "page" in p && !!(p as any).page;
+}
+
 export default function SeoChecklist(props: Props) {
-  const items = "page" in props ? buildItemsFromPage(props.page) : props.items;
+  const items: ChecklistItem[] = isPageProps(props)
+    ? buildItemsFromPage(props.page)
+    : (props.items as ChecklistItem[]);
+
   const title = props.title ?? "SEO Checklist";
 
   const done = items.filter((i) => i.ok).length;

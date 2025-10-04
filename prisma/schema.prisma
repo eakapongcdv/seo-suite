@@ -63,13 +63,16 @@ model Project {
   targetLocale String  @default("en")
   includeBaidu Boolean @default(false)
 
+  figmaFileKey     String?
+  figmaAccessToken String? @db.Text
+
   pages        Page[]
   integrations ProjectIntegration[]
+  rankKeywords RankKeyword[] // ⬅️ renamed from "RankKeyword" to "rankKeywords"
 
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  owner       User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  RankKeyword RankKeyword[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }
 
 //
@@ -136,8 +139,9 @@ model Page {
   updatedAt DateTime @updatedAt
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  // Backref to keywords that target this page
   rankTargets RankKeyword[]
-  // @@unique([projectId, pageUrl])
+  // @@unique([projectId, pageUrl]) // enable if you want to prevent duplicates per project
 
   @@index([projectId])
   @@index([projectId, sortNumber])
@@ -172,7 +176,7 @@ model ProjectIntegration {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([projectId, type]) // ensure one integration type per project
+  @@unique([projectId, type]) // one integration type per project
   @@index([projectId, type])
 }
 

@@ -2,7 +2,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
@@ -11,39 +10,57 @@ async function ensureUser() {
   return session?.user?.id ?? null;
 }
 
+function normStr(v: FormDataEntryValue | null | undefined) {
+  return v === null || v === undefined ? undefined : String(v).trim();
+}
+
 export async function createProjectAction(formData: FormData) {
   const userId = await ensureUser();
   if (!userId) throw new Error("Unauthorized");
 
-  const siteName = String(formData.get("siteName") || "").trim();
-  const siteUrl  = String(formData.get("siteUrl")  || "").trim();
-  const targetLocale = String(formData.get("targetLocale") || "en");
+  const siteName = normStr(formData.get("siteName")) || "";
+  const siteUrl = normStr(formData.get("siteUrl")) || "";
+  const targetLocale = normStr(formData.get("targetLocale")) || "en";
+
+  // checkbox: ใน create ใช้ค่าจากฟอร์ม (มี value="true" เมื่อมีคีย์)
   const includeBaidu = String(formData.get("includeBaidu") || "false") === "true";
+
+  // NEW: Figma fields (ต่อโปรเจกต์)
+  const figmaFileKey = normStr(formData.get("figmaFileKey")) || null;
+  const figmaAccessToken = normStr(formData.get("figmaAccessToken")) || null;
 
   if (!siteName) throw new Error("siteName is required");
 
-  const project = await prisma.project.create({
-    data: { ownerId: userId, siteName, siteUrl, targetLocale, includeBaidu }
+  await prisma.project.create({
+    data: {
+      ownerId: userId,
+      siteName,
+      siteUrl,
+      targetLocale,
+      includeBaidu,
+      // ฟิลด์ใหม่ (ต้องมีใน Prisma schema ด้วย)
+      figmaFileKey,
+      figmaAccessToken,
+    },
   });
 
   // อัปเดตรายการหน้า /app/projects
   revalidatePath("/app/projects");
-
-  // ถ้าอยากพาไปหน้าโปรเจกต์ใหม่เลย ให้ใช้ redirect (จะ throw และถือเป็น void)
-  // redirect(`/app/projects/${project.id}`);
-
-  // ❗️ห้าม return ค่าใด ๆ
+  // ❗️อย่าคืนค่า (server action ควรเป็น void)
 }
 
 export async function deleteProjectAction(formData: FormData) {
   const userId = await ensureUser();
   if (!userId) throw new Error("Unauthorized");
 
-  const id = String(formData.get("id"));
+  const id = String(formData.get("id") || "");
+  if (!id) throw new Error("Missing project id");
+
   const proj = await prisma.project.findFirst({ where: { id, ownerId: userId } });
   if (!proj) throw new Error("Not found");
 
   await prisma.project.delete({ where: { id } });
+
   revalidatePath("/app/projects");
 }
 
@@ -61,13 +78,23 @@ export async function updateProjectAction(formData: FormData) {
   });
   if (!exists) throw new Error("Not found");
 
-  // ดึงค่าจากฟอร์ม (อัปเดตแบบ partial)
-  const siteName = formData.get("siteName")?.toString().trim();
-  const siteUrl = formData.get("siteUrl")?.toString().trim();
-  const targetLocale = formData.get("targetLocale")?.toString().trim();
+  // อ่านฟิลด์แบบ partial (มีคีย์ค่อยอัปเดต)
+  const siteName = normStr(formData.get("siteName"));
+  const siteUrl = normStr(formData.get("siteUrl"));
+  const targetLocale = normStr(formData.get("targetLocale"));
 
-  // checkbox: ถ้าไม่ติ๊ก จะไม่มีคีย์ใน FormData → ใช้ formData.has()
-  const includeBaidu = formData.has("includeBaidu");
+  // checkbox edit: ถ้าฟอร์มมีช่องให้ติ๊กเสมอ ให้ใช้ .has() เพื่อ set true/false ตามสถานะจริง
+  // ถ้าไม่มีช่องในฟอร์ม (บางหน้า) ให้ไม่แตะต้องฟิลด์นี้
+  const includeBaidu =
+    formData.has("includeBaidu") || formData.get("includeBaidu") === "false"
+      ? formData.has("includeBaidu")
+      : undefined;
+
+  // NEW: Figma fields (optional update)
+  const figmaFileKey = formData.has("figmaFileKey") ? normStr(formData.get("figmaFileKey")) ?? null : undefined;
+  const figmaAccessToken = formData.has("figmaAccessToken")
+    ? normStr(formData.get("figmaAccessToken")) ?? null
+    : undefined;
 
   await prisma.project.update({
     where: { id },
@@ -75,7 +102,9 @@ export async function updateProjectAction(formData: FormData) {
       ...(siteName !== undefined ? { siteName } : {}),
       ...(siteUrl !== undefined ? { siteUrl } : {}),
       ...(targetLocale !== undefined ? { targetLocale } : {}),
-      includeBaidu,
+      ...(includeBaidu !== undefined ? { includeBaidu } : {}),
+      ...(figmaFileKey !== undefined ? { figmaFileKey } : {}),
+      ...(figmaAccessToken !== undefined ? { figmaAccessToken } : {}),
     },
   });
 
@@ -83,4 +112,3 @@ export async function updateProjectAction(formData: FormData) {
   revalidatePath("/app/projects");
   // ❗️ไม่ต้อง return ค่าใด ๆ
 }
-
