@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build:local": "next build",
+    "build": "npx prisma generate && rm -rf .next && npx next build",
     "start": "next start",
     "lint": "next lint"
   },
