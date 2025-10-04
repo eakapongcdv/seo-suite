@@ -254,3 +254,151 @@ export async function recommendSeoKeywordsAction(formData: FormData) {
 
   revalidatePath(`/app/projects/${projectId}`);
 }
+
+// app/app/projects/[projectid]/actions.ts (ภายในไฟล์นี้)
+export async function refreshLighthouseAction(formData: FormData) {
+  "use server";
+
+  const pageId = String(formData.get("pageId") || "");
+  const projectId = String(formData.get("projectId") || "");
+
+  console.log("[LH] start", { pageId, projectId });
+
+  // ปิดได้ด้วย ENV ถ้ารันบนโฮสต์ที่ไม่มี Chrome
+  if (process.env.ENABLE_LIGHTHOUSE === "false") {
+    console.warn("[LH] disabled by ENABLE_LIGHTHOUSE=false");
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+
+  // ป้องกัน Edge runtime
+  // @ts-ignore
+  if (typeof process === "undefined" || (process as any).env?.NEXT_RUNTIME === "edge") {
+    console.error("[LH] unsupported runtime: edge");
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+
+  // โหลดข้อมูลโครงการ + หน้า
+  const project = await prisma.project.findFirst({
+    where: { id: projectId },
+    select: { siteUrl: true },
+  });
+  if (!project?.siteUrl) {
+    console.error("[LH] project not found or missing siteUrl");
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+  console.log("[LH] project ok", { siteUrl: project.siteUrl });
+
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { pageUrl: true },
+  });
+  if (!page) {
+    console.error("[LH] page not found");
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+
+  // ประกอบ URL เป้าหมาย
+  let targetUrl = "";
+  try {
+    const isAbs = page.pageUrl?.startsWith("http");
+    targetUrl = isAbs ? page.pageUrl! : new URL(page.pageUrl || "/", project.siteUrl).toString();
+  } catch (e) {
+    console.error("[LH] invalid URL compose", e);
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+  console.log("[LH] targetUrl", { targetUrl });
+
+  // dynamic import (CJS) เพื่อตัดปัญหา ESM/import.meta
+  let lighthouse: any;
+  let launch: any;
+  try {
+    console.log("[LH] importing modules (CJS)...");
+    const lhMod = await import("lighthouse/core/index.cjs");
+    lighthouse = lhMod.default || lhMod;
+
+    const chromeMod = await import("chrome-launcher");
+    launch = chromeMod.launch;
+
+    console.log("[LH] import ok (CJS)");
+  } catch (e) {
+    console.error("[LH] import failed (likely unsupported runtime)", e);
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        lighthousePerf: null,
+        lighthouseSeo: null,
+        lighthouseAccessibility: null,
+      },
+    });
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+
+  // รัน Lighthouse
+  let chrome: any;
+  try {
+    chrome = await launch({
+      chromeFlags: [
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+      ],
+    });
+    console.log("[LH] chrome launched", { port: chrome.port });
+
+    const options = {
+      logLevel: "info",
+      output: "json",
+      onlyCategories: ["performance", "seo", "accessibility"],
+      port: chrome.port,
+    } as const;
+
+    const runnerResult = await lighthouse(targetUrl, options as any);
+    if (!runnerResult?.lhr?.categories) {
+      throw new Error("Lighthouse returned empty result");
+    }
+
+    const perf = Math.round(((runnerResult.lhr.categories.performance?.score ?? 0) as number) * 100);
+    const seo = Math.round(((runnerResult.lhr.categories.seo?.score ?? 0) as number) * 100);
+    const a11y = Math.round(((runnerResult.lhr.categories.accessibility?.score ?? 0) as number) * 100);
+
+    console.log("[LH] scores", { perf, seo, a11y });
+
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        lighthousePerf: Number.isFinite(perf) ? perf : null,
+        lighthouseSeo: Number.isFinite(seo) ? seo : null,
+        lighthouseAccessibility: Number.isFinite(a11y) ? a11y : null,
+      },
+    });
+  } catch (e) {
+    console.error("[LH] run failed", e);
+    // ถ้า fail ให้เคลียร์คะแนนเพื่อบอกสถานะ
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        lighthousePerf: null,
+        lighthouseSeo: null,
+        lighthouseAccessibility: null,
+      },
+    });
+  } finally {
+    if (chrome) {
+      try {
+        await chrome.kill();
+        console.log("[LH] chrome killed");
+      } catch (e) {
+        console.error("[LH] chrome kill failed", e);
+      }
+    }
+  }
+
+  revalidatePath(`/app/projects/${projectId}`);
+}

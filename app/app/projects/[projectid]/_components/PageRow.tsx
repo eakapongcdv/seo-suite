@@ -16,6 +16,7 @@ import {
   deletePageAction,
   syncFigmaAction,
   recommendSeoKeywordsAction,
+  refreshLighthouseAction
 } from "../actions";
 
 type PageRowProps = {
@@ -327,22 +328,38 @@ export default function PageRow({ projectId, page }: PageRowProps) {
             </div>
           </div>
 
+       
           {/* ============ บรรทัด 3: Lighthouse Form ============ */}
           <div className="md:col-span-6">
             <div className="rounded-xl border border-gray-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-medium text-gray-900">Lighthouse Scores</div>
-                <div className="flex gap-3">
-                  <Circular value={Number(page?.lighthouseSeo ?? 0)} label="SEO" />
-                  <Circular value={Number(page?.lighthousePerf ?? 0)} label="Perf" />
-                  <Circular value={Number(page?.lighthouseAccessibility ?? 0)} label="A11y" />
-                </div>
+
+                {/* ⚡️ ปุ่ม Refresh Lighthouse (ฟอร์มพี่น้อง แยกจากฟอร์มอัปเดตค่าด้านล่าง) */}
+                <form action={refreshLighthouseAction}>
+                  <input type="hidden" name="pageId" value={page?.id} />
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <button
+                    type="submit"
+                    aria-label="Refresh Lighthouse"
+                    title="Refresh Lighthouse"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                </form>
               </div>
 
+              <div className="mb-2 flex gap-3">
+                <Circular value={Number(page?.lighthouseSeo ?? 0)} label="SEO" />
+                <Circular value={Number(page?.lighthousePerf ?? 0)} label="Perf" />
+                <Circular value={Number(page?.lighthouseAccessibility ?? 0)} label="A11y" />
+              </div>
+
+              {/* ฟอร์มแก้ไขค่าคะแนน (manual override) */}
               <form action={updatePageAction} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <input type="hidden" name="id" value={page?.id} />
                 <input type="hidden" name="projectId" value={projectId} />
-
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-700">SEO</label>
                   <input
@@ -394,6 +411,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
               </form>
             </div>
           </div>
+
 
           {/* ============ เช็กลิสต์รวม ============ */}
           <div className="md:col-span-12">
