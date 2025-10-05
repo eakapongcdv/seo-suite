@@ -105,6 +105,10 @@ model Page {
 
   aiSeoInsight String? @db.Text
 
+  // ====== Top keyword cache (Google Ads) ======
+  topKeywordVolumesJson String?   @db.Text // เก็บ JSON ของ [{keyword, avgMonthlySearches}]
+  topKeywordFetchedAt   DateTime?
+
   // --- On-page SEO checklist ---
   seoTitlePresent             Boolean @default(false)
   seoTitleLengthOk            Boolean @default(false) // e.g., 30–60 chars

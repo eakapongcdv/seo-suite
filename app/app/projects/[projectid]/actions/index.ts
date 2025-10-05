@@ -6,3 +6,4 @@ export { recommendSeoKeywordsAction } from "./recommendSeo";
 export { refreshLighthouseAction } from "./lighthouse";
 export { scrapeRealPageAction } from "./scrape";
 export { aiSeoInsightAction } from "./aiSeoInsight";
+export * from "./topKeywords"; 

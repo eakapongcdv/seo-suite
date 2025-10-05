@@ -25,6 +25,7 @@ import {
   refreshLighthouseAction,
   scrapeRealPageAction,
   aiSeoInsightAction,
+  refreshTopKeywordVolumesAction
 } from "../actions";
 
 import MarkdownProse from "@/app/components/MarkdownProse";
@@ -34,6 +35,21 @@ function mapLocaleToKeywordLang(locale: string | null | undefined): "en" | "th" 
   if (locale === "th") return "th";
   if (locale === "zh-CN") return "zh";
   return "en";
+}
+// helper แปลง JSON ปลอดภัย
+function parseTopKeywordJson(v?: string | null):
+  | { keyword: string; avgMonthlySearches: number }[]
+  | { error: string }
+  | [] {
+  if (!v) return [];
+  try {
+    const parsed = JSON.parse(v);
+    if (Array.isArray(parsed)) return parsed as any;
+    if (parsed && typeof parsed.error === "string") return parsed as any;
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 type PageRowProps = {
@@ -86,6 +102,8 @@ type PageRowProps = {
     baiduConnected?: boolean | null;
 
     aiSeoInsight?: string | null;
+    topKeywordVolumesJson?: string | null;
+    topKeywordFetchedAt?: Date | string | null;
 
     updatedAt: Date | string;
   };
@@ -449,6 +467,62 @@ export default function PageRow({
 
           {/* FOOTER: AI SEO Insight + Checklist */}
           <div className="md:col-span-12 space-y-3">
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-900">Top Keywords (Google Ads)</div>
+                <form action={refreshTopKeywordVolumesAction}>
+                  <input type="hidden" name="pageId" value={page.id} />
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton
+                    aria-label="Refresh Top Keywords"
+                    title="Refresh Top Keywords"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <RefreshCw className="mr-1 h-4 w-4" />
+                    Refresh
+                  </SubmitButton>
+                </form>
+              </div>
+
+              {(() => {
+                const data = parseTopKeywordJson(page.topKeywordVolumesJson);
+                const fetchedAt = page.topKeywordFetchedAt ? new Date(page.topKeywordFetchedAt as any).toLocaleString() : null;
+
+                if (Array.isArray(data)) {
+                  if (data.length === 0) {
+                    return <p className="text-sm text-gray-500">ยังไม่มีข้อมูล — กด “Refresh” เพื่อดึงจาก Google Ads</p>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {data.slice(0, 3).map((kv) => (
+                          <span
+                            key={kv.keyword}
+                            className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
+                            title={`${kv.keyword}`}
+                          >
+                            <span className="font-medium">{kv.keyword}</span>
+                            <span className="text-gray-500">•</span>
+                            <span className="text-gray-700">avg {kv.avgMonthlySearches.toLocaleString()}</span>
+                          </span>
+                        ))}
+                      </div>
+                      {fetchedAt && (
+                        <div className="text-xs text-gray-500">Last fetched: {fetchedAt}</div>
+                      )}
+                    </div>
+                  );
+                } else {
+                  // error shape: { error: string }
+                  return (
+                    <div className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+                      ดึงข้อมูลไม่สำเร็จ: {(data as any).error || "Unknown error"}
+                    </div>
+                  );
+                }
+              })()}
+            </div>
+
             <div className="rounded-xl border border-gray-200 bg-white p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-sm font-semibold text-gray-900">
