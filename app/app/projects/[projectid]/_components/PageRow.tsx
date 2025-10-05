@@ -390,7 +390,7 @@ export default function PageRow({
 
               <div>
                 <div className="mb-1 text-xs font-medium text-gray-700">Live Capture</div>
-                <div className="aspect-[4/3] overflow-hidden rounded-md border bg-gray-50">
+                <div className="max-h-[500px] overflow-auto rounded-md border bg-gray-50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={
@@ -401,7 +401,7 @@ export default function PageRow({
                           : ""
                     }
                     alt="Live page capture"
-                    className="h-full w-full object-cover"
+                    className="block h-auto w-full object-top"
                     loading="lazy"
                   />
                 </div>
