@@ -1,3 +1,4 @@
+// app/app/projects/page.tsx
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
@@ -5,26 +6,6 @@ import CreateProjectModal from "./_components/CreateProjectModal";
 import ProjectCard from "./_components/ProjectCard";
 
 export const dynamic = "force-dynamic";
-
-async function getData(userId: string) {
-  return prisma.project.findMany({
-    where: { ownerId: userId },
-    orderBy: { updatedAt: "desc" },
-    include: {
-      _count: { select: { pages: true } },
-      // ดึง fields ที่ต้องใช้ใน Edit modal (รวม figma config)
-      pages: {
-        select: {
-          id: true,
-          pageName: true,
-          figmaCaptureUrl: true,
-          pageSeoKeywords: true,
-          lighthouseSeo: true,
-        },
-      },
-    },
-  });
-}
 
 export default async function ProjectsPage() {
   const session = await auth();
@@ -39,21 +20,30 @@ export default async function ProjectsPage() {
     );
   }
 
-  // NOTE: ถ้าคุณเพิ่มฟิลด์ figmaFileKey/figmaAccessToken ใน Prisma (ที่ model Project)
-  // ให้ add select ฟิลด์ทั้งสองในส่วน query นี้ด้วย (หรือใช้ include: true)
   const projects = await prisma.project.findMany({
     where: { ownerId: session.user.id },
     orderBy: { updatedAt: "desc" },
-    include: {
+    select: {
+      id: true,
+      ownerId: true,
+      siteName: true,
+      siteUrl: true,
+      targetLocale: true,     // <= เดี่ยว
+      includeBaidu: true,
+      figmaFileKey: true,
+      figmaAccessToken: true,
+      updatedAt: true,
       _count: { select: { pages: true } },
       pages: {
         select: {
           id: true,
           pageName: true,
+          pageUrl: true,
           figmaCaptureUrl: true,
           pageSeoKeywords: true,
           lighthouseSeo: true,
         },
+        orderBy: { sortNumber: "asc" },
       },
     },
   });
@@ -67,18 +57,11 @@ export default async function ProjectsPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
         {projects.map((p) => (
-          <ProjectCard
-            key={p.id}
-            project={{
-              ...p,
-              figmaFileKey: (p as any).figmaFileKey ?? null,
-              figmaAccessToken: (p as any).figmaAccessToken ?? null,
-              includeBaidu: (p as any).includeBaidu ?? false,
-            }}
-          />
+          <ProjectCard key={p.id} project={p} />
         ))}
-
-        {projects.length === 0 && <div className="text-sm text-gray-500">No projects yet.</div>}
+        {projects.length === 0 && (
+          <div className="text-sm text-gray-500">No projects yet.</div>
+        )}
       </div>
     </div>
   );

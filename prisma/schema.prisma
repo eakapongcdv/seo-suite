@@ -68,11 +68,13 @@ model Project {
 
   pages        Page[]
   integrations ProjectIntegration[]
-  rankKeywords RankKeyword[] // ⬅️ renamed from "RankKeyword" to "rankKeywords"
+  rankKeywords RankKeyword[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, siteName, targetLocale], name: "project_owner_site_locale_unique")
 }
 
 //
