@@ -77,6 +77,23 @@ export default function ProjectGroup({
     return Math.round(sum / pages.length);
   }, [projects]);
 
+  const handleOpenSite = (siteUrl: string) => {
+    if (siteUrl) window.open(siteUrl, "_blank", "noopener");
+  };
+
+  const handleDelete = async (pid: string, hasPages: boolean) => {
+    if (hasPages) {
+      setShowDeleteWarnId(pid);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/projects/${pid}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      router.refresh();
+    } catch (e) {
+      alert((e as Error).message || "Delete failed");
+    }
+  };
 
   const handleClone = async (pid: string) => {
     if (!cloneLocale) return;
@@ -181,9 +198,55 @@ export default function ProjectGroup({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
-                  {/* ปุ่มเดิม: Open / Edit / Clone / Delete */}
-                  {/* ... (เหมือนที่ทำไว้ก่อนหน้า) ... */}
-                </div>
+                {/* View (เปิด Site) */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenSite(p.siteUrl)}
+                  disabled={!p.siteUrl}
+                  className="inline-flex rounded-lg border p-2 text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={p.siteUrl ? "Open site" : "Site URL not set"}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
+
+                <Link
+                  href={`/app/projects/${p.id}`}
+                  className="inline-flex rounded-lg border p-2 text-gray-600 hover:bg-gray-50"
+                  title="View project detail"
+                >
+                  <ExternalLink className="h-4 w-4 rotate-[-45deg]" />
+                </Link>
+
+                {/* Edit */}
+                <Link
+                  href={`/app/projects/${p.id}/edit`}
+                  className="inline-flex rounded-lg border p-2 text-gray-600 hover:bg-gray-50"
+                  title="Edit project"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Link>
+
+                {/* Clone */}
+                <button
+                  type="button"
+                  onClick={() => setShowCloneId(p.id)}
+                  className="inline-flex rounded-lg border p-2 text-gray-600 hover:bg-gray-50"
+                  title="Clone project to a new locale"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+
+                {/* Delete (กันลบถ้ายังมีเพจ) */}
+                <button
+                  type="button"
+                  onClick={() => handleDelete(p.id, p._count.pages > 0)}
+                  className="inline-flex rounded-lg border p-2 text-red-600 hover:bg-red-50"
+                  title="Delete project"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+
               </div>
 
               {/* แถวล่าง: ProjectMetrics */}

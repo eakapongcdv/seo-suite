@@ -2,7 +2,7 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 import Circular from "./Circular";
 
-type PageLike = {
+export type PageLike = {
   pageName: string;
   pageUrl: string;
   pageMetaDescription: string | null;
@@ -13,39 +13,49 @@ type PageLike = {
   lighthousePerf: number | null;
   lighthouseSeo: number | null;
   lighthouseAccessibility: number | null;
+
+  // เชื่อมต่อเครื่องมือภายนอก (อาจไม่มีส่งมา)
+  gscConnected?: boolean | null;
+  baiduConnected?: boolean | null;
 };
 
 export type ChecklistItem = { ok: boolean; label: string };
 
 type Props =
-  | { page: PageLike; title?: string; items?: never }
-  | { items: ChecklistItem[]; title?: string; page?: never };
+  | { page: PageLike; title?: string; items?: never; strictLighthouse?: boolean }
+  | { items: ChecklistItem[]; title?: string; page?: never; strictLighthouse?: boolean };
 
 /** สร้างรายการเช็คจากสคีมล่าสุด (derive จากฟิลด์ใน Page) */
-function buildItemsFromPage(p: PageLike): ChecklistItem[] {
+function buildItemsFromPage(p: PageLike, strictLighthouse: boolean): ChecklistItem[] {
   const hasMeta = !!p?.pageMetaDescription?.trim();
-  const hasContentKW = (p?.pageContentKeywords?.length ?? 0) > 0;
-  const hasSeoKW = (p?.pageSeoKeywords?.length ?? 0) > 0;
+  const contentKW = Array.isArray(p?.pageContentKeywords) ? p.pageContentKeywords : [];
+  const seoKW = Array.isArray(p?.pageSeoKeywords) ? p.pageSeoKeywords : [];
+  const hasContentKW = contentKW.length > 0;
+  const hasSeoKW = seoKW.length > 0;
   const hasFigmaCapture = !!p?.figmaCaptureUrl;
   const hasFigmaText = !!p?.figmaTextContent?.trim();
 
-  // คุณภาพ URL ง่าย ๆ: เริ่มด้วย "/" หรือ "http"
-  const urlOk = !!p?.pageUrl && (p?.pageUrl.startsWith("/") || p?.pageUrl.startsWith("http"));
+  // URL เบื้องต้น
+  const urlOk = !!p?.pageUrl && (p.pageUrl.startsWith("/") || p.pageUrl.startsWith("http"));
 
-  // Lighthouse: นับว่า “มีผล” ถ้ามีค่า (จะดีมากถ้า >= 80 แต่ยังถือว่า “มี” ก่อน)
-  const hasLhPerf = typeof p?.lighthousePerf === "number";
-  const hasLhSeo = typeof p?.lighthouseSeo === "number";
-  const hasLhA11y = typeof p?.lighthouseAccessibility === "number";
+  // Lighthouse: ถ้า strict = true ต้อง >= 80 ถึงนับว่า ok
+  const perf = typeof p?.lighthousePerf === "number" ? p.lighthousePerf : null;
+  const seo = typeof p?.lighthouseSeo === "number" ? p.lighthouseSeo : null;
+  const a11y = typeof p?.lighthouseAccessibility === "number" ? p.lighthouseAccessibility : null;
 
-  // ความสอดคล้องเบื้องต้น: มี keyword ทับซ้อนระหว่าง content กับ seo
+  const hasLhPerf = perf !== null && (!strictLighthouse || perf >= 80);
+  const hasLhSeo = seo !== null && (!strictLighthouse || seo >= 80);
+  const hasLhA11y = a11y !== null && (!strictLighthouse || a11y >= 80);
+
+  // ความสอดคล้องเบื้องต้น: keyword ทับซ้อนระหว่าง content กับ seo
   const overlapOk = (() => {
-    const a = new Set((p?.pageContentKeywords || []).map((s) => s.toLowerCase()));
-    const b = new Set((p?.pageSeoKeywords || []).map((s) => s.toLowerCase()));
-    for (const k of a) if (b.has(k)) return true;
+    if (!contentKW.length || !seoKW.length) return false;
+    const a = new Set(contentKW.map((s) => s.toLowerCase()));
+    for (const k of seoKW) if (a.has(k.toLowerCase())) return true;
     return false;
   })();
 
-  return [
+  const items: ChecklistItem[] = [
     { ok: !!p?.pageName?.trim(), label: "Page name set" },
     { ok: urlOk, label: "Valid page URL" },
     { ok: hasMeta, label: "Meta description present" },
@@ -54,27 +64,38 @@ function buildItemsFromPage(p: PageLike): ChecklistItem[] {
     { ok: overlapOk, label: "SEO keywords align with content" },
     { ok: hasFigmaCapture, label: "Figma capture synced" },
     { ok: hasFigmaText, label: "Figma text extracted" },
-    { ok: hasLhPerf, label: "Lighthouse: Performance recorded" },
-    { ok: hasLhSeo, label: "Lighthouse: SEO recorded" },
-    { ok: hasLhA11y, label: "Lighthouse: Accessibility recorded" },
+    { ok: hasLhPerf, label: strictLighthouse ? "Lighthouse: Performance ≥ 80" : "Lighthouse: Performance recorded" },
+    { ok: hasLhSeo, label: strictLighthouse ? "Lighthouse: SEO ≥ 80" : "Lighthouse: SEO recorded" },
+    { ok: hasLhA11y, label: strictLighthouse ? "Lighthouse: Accessibility ≥ 80" : "Lighthouse: Accessibility recorded" },
   ];
+
+  // ต่อท้ายเมื่อมีฟิลด์บอกสถานะการเชื่อมต่อ
+  if (typeof p.gscConnected === "boolean") {
+    items.push({ ok: !!p.gscConnected, label: "Connected: Google Search Console" });
+  }
+  if (typeof p.baiduConnected === "boolean") {
+    items.push({ ok: !!p.baiduConnected, label: "Connected: Baidu Webmaster" });
+  }
+
+  return items;
 }
 
 // Type guard ช่วยให้ TS รู้ว่า props มี page แน่นอน
-function isPageProps(p: Props): p is { page: PageLike; title?: string } {
-  // เช็คทั้ง key และค่าที่ไม่เป็น undefined
+function isPageProps(p: Props): p is { page: PageLike; title?: string; strictLighthouse?: boolean } {
   return "page" in p && !!(p as any).page;
 }
 
 export default function SeoChecklist(props: Props) {
+  const strict = props.strictLighthouse ?? false;
+
   const items: ChecklistItem[] = isPageProps(props)
-    ? buildItemsFromPage(props.page)
+    ? buildItemsFromPage(props.page, strict)
     : (props.items as ChecklistItem[]);
 
   const title = props.title ?? "SEO Checklist";
-
+  const total = items.length || 1;
   const done = items.filter((i) => i.ok).length;
-  const pct = Math.round((done / (items.length || 1)) * 100);
+  const pct = Math.round((done / total) * 100);
 
   return (
     <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3">

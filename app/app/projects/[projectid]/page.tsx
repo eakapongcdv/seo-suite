@@ -15,7 +15,13 @@ async function ensureOwner(projectId: string) {
   if (!session?.user?.id) return null;
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, ownerId: true, siteName: true, siteUrl: true },
+    select: {
+      id: true,
+      ownerId: true,
+      siteName: true,
+      siteUrl: true,
+      targetLocale: true, // ✅ ใช้แสดงธงและส่งต่อให้ PageRow
+    },
   });
   if (!project || project.ownerId !== session.user.id) return null;
   return project;
@@ -31,9 +37,12 @@ async function getData(projectId: string) {
   return prisma.project.findUnique({
     where: { id: projectId },
     include: {
+      // ✅ โหลด integrations เพื่อเช็คการเชื่อมต่อ GSC/Baidu
+      integrations: {
+        select: { type: true, status: true, config: true, propertyUri: true },
+      },
       pages: {
         orderBy: [{ sortNumber: "asc" }, { updatedAt: "desc" }],
-        // อย่าใส่ select เพื่อให้ได้ครบทุกฟิลด์ที่ PageRow ใช้
       },
     },
   });
@@ -55,6 +64,19 @@ export default async function ProjectEditor({ params }: { params: Params }) {
   const data = await getData(projectId);
   if (!data) return <div className="p-6">Project not found.</div>;
 
+  // ✅ คำนวณสถานะการเชื่อมต่อจาก ProjectIntegration
+  const gscConnected =
+    data.integrations?.some((i) => i.type === "GSC" && i.status === "ACTIVE") ?? false;
+
+  const baiduConnected =
+    data.integrations?.some((i) => {
+      if (i.status !== "ACTIVE") return false;
+      // ใช้คอนเวนชัน: RANK_API ที่ vendor=baidu หรือ propertyUri มีคำว่า baidu
+      const vendor = (i.config as any)?.vendor?.toString().toLowerCase?.() ?? "";
+      const uri = (i.propertyUri ?? "").toLowerCase();
+      return i.type === "RANK_API" && (vendor === "baidu" || uri.includes("baidu"));
+    }) ?? false;
+
   // project-level metrics
   const totalPages = data.pages.length;
   const checklistDone = data.pages.filter((pg) => (pg.pageSeoKeywords?.length ?? 0) > 0).length;
@@ -66,7 +88,14 @@ export default async function ProjectEditor({ params }: { params: Params }) {
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6">
-      <ProjectHeader siteName={project.siteName} siteUrl={project.siteUrl} />
+      {/* Header + ธงตาม targetLocale */}
+      <ProjectHeader
+        siteName={project.siteName}
+        siteUrl={project.siteUrl}
+        targetLocale={project.targetLocale}
+        projectId={project.id}
+      />
+
       <ProjectMetrics
         totalPages={totalPages}
         checklistPct={checklistPct}
@@ -88,7 +117,15 @@ export default async function ProjectEditor({ params }: { params: Params }) {
           </div>
         ) : (
           data.pages.map((pg) => (
-            <PageRow key={pg.id} projectId={data.id} page={pg} />
+            <PageRow
+              key={pg.id}
+              projectId={data.id}
+              page={pg}
+              projectTargetLocale={project.targetLocale}
+              // ✅ ส่งสถานะโปรเจกต์ไปให้ PageRow (วิธี B จะ merge เข้า page ส่งต่อให้ SeoChecklist)
+              projectGscConnected={gscConnected}
+              projectBaiduConnected={baiduConnected}
+            />
           ))
         )}
       </div>
