@@ -4,6 +4,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
+import { getGoogleAdsClientForProject, fetchAvgMonthlySearches } from "@/lib/googleAds"; // ← เพิ่มบรรทัดนี้
 
 export type IntegrationTypeLiteral = "GSC" | "FIGMA" | "RANK_API";
 
@@ -269,90 +270,146 @@ export async function triggerSyncIntegration(formData: FormData) {
   revalidatePath(`/app/projects/${projectId}/integrations`);
 }
 
-// เพิ่มในไฟล์เดียวกัน: app/app/projects/[projectid]/integrations/actions.ts
+/** ---------- Helpers: stringify Google Ads errors อย่างฉลาด ---------- */
+function jsonSafe(v: any, max = 2000) {
+  try {
+    const s = JSON.stringify(
+      v,
+      (_k, val) => (typeof val === "bigint" ? Number(val) : val),
+      2
+    );
+    return s.length > max ? s.slice(0, max) + "…(truncated)" : s;
+  } catch {
+    return String(v);
+  }
+}
+
+/** ดึงข้อความ error ที่พบบ่อยจาก google-ads-api และ Google APIs */
+function extractGoogleAdsError(err: any): string {
+  // 1) ตัวข้อความหลักถ้ามี
+  if (err?.message && typeof err.message === "string") {
+    // บางเคส message เป็น "Request contains an invalid argument."
+    // แต่รายละเอียดจริงอยู่ใน details/errors ด้านล่าง เราจะต่อรวมด้วย
+  }
+
+  // 2) google-ads-api (gRPC-style)
+  //    โครงสร้างพบบ่อย: { code, details: [{ errors: [{ message, error_code: {...}, location: {...} }], request_id }] }
+  const details = Array.isArray(err?.details) ? err.details : undefined;
+  const firstErrors = Array.isArray(details?.[0]?.errors) ? details[0].errors : undefined;
+  const firstError = firstErrors?.[0];
+
+  const parts: string[] = [];
+  if (err?.code) parts.push(`code=${err.code}`);
+  if (err?.status) parts.push(`status=${err.status}`);
+  if (err?.message) parts.push(err.message);
+
+  if (firstError?.message) parts.push(`detail=${firstError.message}`);
+  const ec = firstError?.error_code;
+  if (ec && typeof ec === "object") {
+    // หาคีย์ที่เป็น truthy ภายใน error_code เช่น authorization_error, authentication_error, quota_error
+    const keys = Object.keys(ec).filter((k) => ec[k]);
+    if (keys.length) parts.push(`error_code=${keys.map((k) => `${k}:${ec[k]}`).join(",")}`);
+  }
+  if (firstError?.location?.field_path_elements?.length) {
+    const path = firstError.location.field_path_elements
+      .map((e: any) => e?.field_name)
+      .filter(Boolean)
+      .join(".");
+    if (path) parts.push(`field=${path}`);
+  }
+
+  // 3) รูปแบบ Google Auth / Axios-ish: err.response.data, err.error, err.errors[]
+  if (err?.response?.data) {
+    const d = err.response.data;
+    // พบบ่อย: { error: { code, message, status, details: [...] } }
+    const e2 = d.error || d;
+    if (e2?.message && typeof e2.message === "string") parts.push(`resp=${e2.message}`);
+    else parts.push(`resp=${jsonSafe(e2, 400)}`);
+  } else if (err?.error) {
+    // บางลิบอารีคืน {error:{…}}
+    if (typeof err.error === "string") parts.push(`error=${err.error}`);
+    else parts.push(`error=${jsonSafe(err.error, 400)}`);
+  }
+
+  // 4) ตกหล่นหมด ก็ stringify ทั้งก้อน (ตัดยาว)
+  if (parts.length === 0) {
+    return jsonSafe(err, 600);
+  }
+  return parts.join(" | ");
+}
+
+/** … (โค้ดส่วนอื่น ๆ คงเดิม) … */
+
+/**
+ * ปุ่ม "Test API" — ทดสอบ Google Ads:
+ * 1) GAQL ดู customer
+ * 2) ลอง avg_monthly_searches ของ "iphone 17 pro max"
+ * บันทึกผลย่อใน errorMsg ของ integration เพื่อโชว์บน UI
+ */
 export async function testRankApiGoogle(formData: FormData) {
   const projectId = String(formData.get("projectId") || "");
-  await ensureOwner(projectId);
+  if (!projectId) throw new Error("Missing projectId");
 
-  // ดึงคอนฟิก RANK_API
-  const integ = await prisma.projectIntegration.findUnique({
-    where: { projectId_type: { projectId, type: "RANK_API" } },
-    select: { config: true },
+  const session = await auth();
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, ownerId: true, targetLocale: true },
   });
-
-  const cfg = (integ?.config ?? {}) as any;
-  if (!cfg?.vendor || String(cfg.vendor).toLowerCase() !== "google") {
-    await prisma.projectIntegration.update({
-      where: { projectId_type: { projectId, type: "RANK_API" } },
-      data: { status: "INACTIVE", errorMsg: "Vendor is not 'google' for RANK_API." },
-    });
-    revalidatePath(`/app/projects/${projectId}/integrations`);
-    return;
+  if (!session?.user?.id || !project || project.ownerId !== session.user.id) {
+    throw new Error("Unauthorized");
   }
 
-  // แกะ secret (object หรือ json string)
-  let secret: any = null;
-  try { secret = typeof cfg.secret === "string" ? JSON.parse(cfg.secret) : cfg.secret; } catch {}
-
-  const dev  = secret?.developer_token;
-  const cid  = secret?.client_id;
-  const cs   = secret?.client_secret;
-  const rt   = secret?.refresh_token;
-  const cust = (secret?.customer_id || "").replace(/-/g, "");
-  const mcc  = (secret?.login_customer_id || "").replace(/-/g, "") || undefined;
-
-  // เช็คฟิลด์จำเป็น
-  const missing: string[] = [];
-  if (!dev)  missing.push("developer_token");
-  if (!cid)  missing.push("client_id");
-  if (!cs)   missing.push("client_secret");
-  if (!rt)   missing.push("refresh_token");
-  if (!cust) missing.push("customer_id");
-
-  if (missing.length) {
-    await prisma.projectIntegration.update({
-      where: { projectId_type: { projectId, type: "RANK_API" } },
-      data: { status: "INACTIVE", errorMsg: `Missing fields: ${missing.join(", ")}` },
-    });
-    revalidatePath(`/app/projects/${projectId}/integrations`);
-    return;
-  }
+  // เลือกภาษาสำหรับ keyword planner จาก targetLocale
+  const locale = (project.targetLocale || "th").toLowerCase();
+  const language_code: "th" | "en" | "zh" =
+    locale.startsWith("th") ? "th" : locale.startsWith("zh") ? "zh" : "en";
 
   try {
-    // ใช้แพ็กเกจ google-ads-api (Customer.query)
-    const { GoogleAdsApi } = await import("google-ads-api");
-    const client = new GoogleAdsApi({
-      developer_token: dev,
-      client_id: cid,
-      client_secret: cs,
-    });
+    const { customer } = await getGoogleAdsClientForProject(projectId);
 
-    const customer = client.Customer({
-      customer_id: cust,
-      refresh_token: rt,
-      login_customer_id: mcc, // optional MCC
-    });
-
-    // ยิง query เบาๆ เพื่อยืนยันสิทธิ์/โทเคน
+    // 1) GAQL: ยืนยันสิทธิ์
     const rows = await customer.query(`
-      SELECT customer.id, customer.descriptive_name
+      SELECT
+        customer.resource_name,
+        customer.id,
+        customer.descriptive_name
       FROM customer
       LIMIT 1
     `);
-    console.log("[RANK_API][TEST] OK:", rows?.[0]);
+    const c = rows?.[0]?.customer;
+
+    // 2) Keyword Planner: avg_monthly_searches
+    const sampleKeyword = "iphone 17 pro max";
+    const volumes = await fetchAvgMonthlySearches(projectId, [sampleKeyword], {
+      language_code,
+      // geo_target_constants: ["geoTargetConstants/2392"], // TH
+    });
+    const vol = volumes.find((v) => v.keyword.toLowerCase() === sampleKeyword.toLowerCase());
+    const volNum = vol?.avgMonthlySearches ?? 0;
+
+    const msg = `Test OK — customer=${c?.descriptive_name || c?.resource_name || "?"} | "${sampleKeyword}" avg_monthly_searches=${volNum} (lang=${language_code})`;
 
     await prisma.projectIntegration.update({
       where: { projectId_type: { projectId, type: "RANK_API" } },
-      data: { status: "ACTIVE", lastSyncAt: new Date(), errorMsg: null },
+      data: { lastSyncAt: new Date(), errorMsg: msg },
     });
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    console.error("[RANK_API][TEST] ERROR:", msg);
-    await prisma.projectIntegration.update({
-      where: { projectId_type: { projectId, type: "RANK_API" } },
-      data: { status: "INACTIVE", errorMsg: `Google Ads test failed: ${msg}` },
-    });
-  } finally {
+
     revalidatePath(`/app/projects/${projectId}/integrations`);
+  } catch (err: any) {
+    // ดึงข้อความ error แบบอ่านง่าย
+    const pretty = extractGoogleAdsError(err);
+    console.error("[RANK_API][TEST] ERROR (pretty):", pretty);
+    console.dir(err, { depth: 6 });
+
+    // เซฟลง UI เพื่อดีบัก
+    try {
+      await prisma.projectIntegration.update({
+        where: { projectId_type: { projectId, type: "RANK_API" } },
+        data: { errorMsg: `Test failed: ${pretty}` },
+      });
+    } catch {}
+
+    revalidatePath(`/app/projects/${projectId}/integrations`);
+    throw new Error(`Google Ads test failed: ${pretty}`);
   }
 }

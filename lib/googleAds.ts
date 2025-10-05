@@ -16,29 +16,18 @@ export async function getGoogleAdsClientForProject(projectId: string) {
     where: { projectId, type: "RANK_API", status: "ACTIVE" },
     select: { config: true },
   });
-
   const cfg = (integ?.config ?? {}) as any;
   if (!cfg?.vendor || String(cfg.vendor).toLowerCase() !== "google") {
-    throw new Error("Google Ads integration (vendor=google) is not configured for this project.");
+    throw new Error("RANK_API is not set to vendor=google.");
   }
 
-  let secret: GoogleAdsSecret | null = null;
-  try {
-    secret = typeof cfg.secret === "string" ? JSON.parse(cfg.secret) : cfg.secret;
-  } catch {
-    /* ignore; will fail on required fields */
-  }
+  const secret = typeof cfg.secret === "string" ? JSON.parse(cfg.secret) : cfg.secret;
+  const customer_id = String(secret?.customer_id || "").replace(/-/g, "");
+  const login_customer_id = secret?.login_customer_id ? String(secret.login_customer_id).replace(/-/g, "") : undefined;
 
-  if (
-    !secret?.developer_token ||
-    !secret.client_id ||
-    !secret.client_secret ||
-    !secret.refresh_token ||
-    !secret.customer_id
-  ) {
-    throw new Error(
-      "Google Ads credentials are incomplete. Please configure developer_token, client_id, client_secret, refresh_token, customer_id."
-    );
+  if (!customer_id) {
+    // อธิบายให้ชัดใน errorMsg/UI
+    throw new Error("Google Ads: customer_id is empty. Please enter a 10-digit Ads Account ID (no dashes).");
   }
 
   const client = new GoogleAdsApi({
@@ -47,17 +36,15 @@ export async function getGoogleAdsClientForProject(projectId: string) {
     client_secret: secret.client_secret,
   });
 
-  // ✅ ใช้ customer_id (ตรงตาม type) — จะมีหรือไม่มีขีดก็ได้
-  const normalizedCid = secret.customer_id.replace(/-/g, "");
-
   const customer = client.Customer({
-    customer_id: normalizedCid,
+    customer_id,                // <-- 10 digits (no dashes)
     refresh_token: secret.refresh_token,
-    login_customer_id: secret.login_customer_id, // optional MCC
+    login_customer_id,          // optional MCC (no dashes)
   });
 
-  return { customer, customerId: normalizedCid };
+  return { customer };
 }
+
 
 /**
  * Fetch avg_monthly_searches for given keywords with locale + geo using

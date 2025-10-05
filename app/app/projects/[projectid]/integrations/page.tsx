@@ -392,18 +392,10 @@ export default async function IntegrationsPage({ params }: { params: Params }) {
                 title="Test Google Ads credentials (no save)"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Test API
+                Check API
               </button>
             </form>
-
-            <form action={triggerSyncIntegration}>
-              <input type="hidden" name="projectId" value={projectid} />
-              <input type="hidden" name="type" value="RANK_API" />
-              <button className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs hover:bg-gray-50">
-                <RefreshCw className="h-3.5 w-3.5" />
-                Sync
-              </button>
-            </form>
+      
 
             <form action={disconnectIntegration}>
               <input type="hidden" name="projectId" value={projectid} />
