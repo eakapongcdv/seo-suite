@@ -13,13 +13,13 @@ import {
 } from "@/lib/figma";
 import OpenAI from "openai";
 
-// helper ใช้ซ้ำ
+// ---- auth ตรวจว่าเป็น owner ของ project ----
 async function ensureOwner(projectId: string) {
   const session = await auth();
   if (!session?.user?.id) return null;
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, ownerId: true },
+    select: { id: true, ownerId: true, siteUrl: true },
   });
   if (!project || project.ownerId !== session.user.id) return null;
   return project;
@@ -176,84 +176,144 @@ export async function syncFigmaAction(formData: FormData) {
 }
 
 /**
- * AI: แนะนำคีย์เวิร์ด SEO จาก figmaTextContent + pageContentKeywords
- * - อัปเดตกลับลง field pageSeoKeywords
+ * AI: แนะนำ/เติม Meta Tags จาก figmaTextContent
+ * - อัปเดต: pageDescriptionSummary, pageMetaDescription, pageSeoKeywords
  */
 export async function recommendSeoKeywordsAction(formData: FormData) {
   "use server";
   const pageId = String(formData.get("pageId"));
   const projectId = String(formData.get("projectId"));
+
   const ok = await ensureOwner(projectId);
   if (!ok) throw new Error("Unauthorized");
 
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { figmaTextContent: true, pageContentKeywords: true, pageName: true, pageUrl: true },
+    select: {
+      pageName: true,
+      pageUrl: true,
+      figmaTextContent: true,
+      pageContentKeywords: true,
+    },
   });
   if (!page) throw new Error("Page not found");
 
-  const baseText = (page.figmaTextContent || "").slice(0, 6000);
+  // เตรียม context สำหรับโมเดล
+  const baseText = (page.figmaTextContent || "").slice(0, 8000); // กัน prompt ยาวเกิน
   const seed = (page.pageContentKeywords || []).slice(0, 50);
 
+  // กรณีไม่มีข้อมูลให้ล้างค่าออก เพื่อกันสับสน
   if (!baseText && seed.length === 0) {
     await prisma.page.update({
       where: { id: pageId },
-      data: { pageSeoKeywords: [] },
+      data: {
+        pageDescriptionSummary: null,
+        pageMetaDescription: null,
+        pageSeoKeywords: [],
+      },
     });
     revalidatePath(`/app/projects/${projectId}`);
     return;
   }
 
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+  // เรียก OpenAI ให้สร้างสรุป + meta description + คีย์เวิร์ด (JSON เท่านั้น)
+  // ต้องตั้งค่า OPENAI_API_KEY ใน .env
+  let summary = "";
+  let meta = "";
+  let keywords: string[] = [];
 
-  const prompt = [
-    "You are an SEO expert. From the provided page text and seed keywords, produce a concise list of 10-20 SEO keywords/phrases.",
-    "Rules:",
-    "- Output JSON array of strings only.",
-    "- No duplicates. Lowercase. No quotes inside items. No hashtags.",
-    "- Prefer 2-4 word phrases mixing head + long-tail.",
-    "",
-    `Page name: ${page.pageName ?? ""}`,
-    `Page URL: ${page.pageUrl ?? ""}`,
-    `Seed keywords: ${seed.join(", ")}`,
-    "",
-    "Page text:",
-    baseText,
-  ].join("\n");
-
-  let recs: string[] = [];
   try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+    const prompt = [
+      "You are an SEO expert. Using the provided page text and seed keywords, produce JSON for meta autofill.",
+      "Return ONLY a valid JSON object with fields:",
+      '{ "summary": string (<= 2 sentences),',
+      '  "metaDescription": string (ideally 150-160 chars, persuasive, include primary keywords),',
+      '  "keywords": string[] (10-20 items, lowercase, no duplicates) }',
+      "",
+      "Rules:",
+      "- focus on relevance to page text.",
+      "- avoid quotes inside keywords; 2-4 word phrases preferred.",
+      "- English or page language as appropriate; keep casing consistent (lowercase for keywords).",
+      "",
+      `Page name: ${page.pageName ?? ""}`,
+      `Page URL: ${page.pageUrl ?? ""}`,
+      `Seed keywords: ${seed.join(", ") || "(none)"}`,
+      "",
+      "Page text:",
+      baseText,
+    ].join("\n");
+
     const chat = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: "Return only valid JSON." },
+        { role: "system", content: "Return only valid JSON. No extra commentary." },
         { role: "user", content: prompt },
       ],
-      temperature: 0.3,
+      temperature: 0.35,
     });
 
-    const raw = chat.choices?.[0]?.message?.content || "[]";
-    const jsonStart = raw.indexOf("[");
-    const jsonEnd = raw.lastIndexOf("]");
-    const jsonSafe = jsonStart >= 0 && jsonEnd >= 0 ? raw.slice(jsonStart, jsonEnd + 1) : "[]";
-    const parsed = JSON.parse(jsonSafe);
-    recs = Array.isArray(parsed)
-      ? parsed.map((s: any) => String(s).trim().toLowerCase()).filter(Boolean)
+    const raw = chat.choices?.[0]?.message?.content?.trim() || "{}";
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    const jsonSafe = start >= 0 && end >= 0 ? raw.slice(start, end + 1) : "{}";
+    const parsed = JSON.parse(jsonSafe) as {
+      summary?: string;
+      metaDescription?: string;
+      keywords?: string[];
+    };
+
+    summary = String(parsed.summary || "").trim();
+    meta = String(parsed.metaDescription || "").trim();
+    keywords = Array.isArray(parsed.keywords)
+      ? parsed.keywords.map((k) => String(k).trim().toLowerCase()).filter(Boolean)
       : [];
-  } catch {
-    // fallback: seed + คำเด่นจากข้อความ
-    const fromSeed = seed.slice(0, 10);
-    const extra = extractKeywordsSimple(baseText, 10);
-    recs = Array.from(new Set([...fromSeed, ...extra])).slice(0, 20);
+
+    // ทำความสะอาดข้อมูลเพิ่มเติม
+    // - จำกัดความยาว meta ~160 ตัวอักษร เพื่อกันยาวเกิน
+    if (meta.length > 165) meta = meta.slice(0, 162).replace(/\s+\S*$/, "") + "…";
+    // - ตัดคีย์เวิร์ดซ้ำ และจำกัด 20 รายการ
+    keywords = Array.from(new Set(keywords)).slice(0, 20);
+
+    // fallback เบา ๆ หากโมเดลให้ผลไม่ครบ
+    if (!summary) {
+      summary = baseText.split(/\.\s+/).slice(0, 2).join(". ").slice(0, 240);
+    }
+    if (!meta) {
+      const base = summary || baseText.slice(0, 220);
+      meta = base.slice(0, 155).replace(/\s+\S*$/, "");
+      if (meta.length >= 150) meta += "…";
+    }
+    if (keywords.length === 0) {
+      // ใช้ seed + ดึงคำเด่นแบบง่าย
+      const extra = extractKeywordsSimple(baseText, 12);
+      keywords = Array.from(new Set([...(seed.slice(0, 8)), ...extra])).slice(0, 15);
+    }
+  } catch (e) {
+    // กรณีเรียก OpenAI ไม่ได้ ให้ fallback ง่าย ๆ จากข้อความ
+    const extra = extractKeywordsSimple(baseText, 12);
+    summary = baseText.split(/\.\s+/).slice(0, 2).join(". ").slice(0, 240);
+    let tmp = summary || baseText.slice(0, 220);
+    meta = tmp.slice(0, 155).replace(/\s+\S*$/, "");
+    if (meta.length >= 150) meta += "…";
+    keywords = Array.from(new Set([...(seed.slice(0, 8)), ...extra])).slice(0, 15);
   }
 
+  // อัปเดตกลับเข้า DB
   await prisma.page.update({
     where: { id: pageId },
-    data: { pageSeoKeywords: recs },
+    data: {
+      pageDescriptionSummary: summary || null,
+      pageMetaDescription: meta || null,
+      pageSeoKeywords: keywords,
+    },
   });
 
+  // refresh หน้าให้เห็นค่าที่ autofill
   revalidatePath(`/app/projects/${projectId}`);
 }
+
 
 // app/app/projects/[projectid]/actions.ts (ภายในไฟล์นี้)
 export async function refreshLighthouseAction(formData: FormData) {
@@ -399,6 +459,162 @@ export async function refreshLighthouseAction(formData: FormData) {
       }
     }
   }
+
+  revalidatePath(`/app/projects/${projectId}`);
+}
+
+// ---- helper ทำ URL ให้เป็น absolute จาก project.siteUrl + page.pageUrl ----
+function toAbsoluteUrl(siteUrl: string, pageUrl: string) {
+  try {
+    if (!siteUrl) return pageUrl;
+    if (!pageUrl) return siteUrl;
+    // ถ้าเป็น relative (ขึ้นต้นด้วย /) ให้ต่อกับ siteUrl
+    if (pageUrl.startsWith("/")) {
+      const u = new URL(siteUrl);
+      return `${u.origin}${pageUrl}`;
+    }
+    // ถ้าเป็น absolute อยู่แล้ว
+    return new URL(pageUrl).toString();
+  } catch {
+    return pageUrl;
+  }
+}
+
+// ---- parser แบบเบา ๆ (เลี่ยงแพ็กเกจเพิ่ม) ----
+function pickMeta(html: string, name: string) {
+  const re = new RegExp(
+    `<meta[^>]+(?:name|property)=["']${name}["'][^>]*content=["']([^"']+)["'][^>]*>`,
+    "i"
+  );
+  const m = html.match(re);
+  return m?.[1]?.trim() ?? "";
+}
+function pickTitle(html: string) {
+  const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return m?.[1]?.trim() ?? "";
+}
+function pickH1(html: string) {
+  const m = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  // ลบแท็กภายใน
+  const raw = m?.[1] ?? "";
+  return raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+function pickCanonical(html: string) {
+  const m = html.match(
+    /<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["'][^>]*>/i
+  );
+  return m?.[1]?.trim() ?? "";
+}
+function pickRobotsNoindex(html: string) {
+  const content = pickMeta(html, "robots").toLowerCase();
+  return content.includes("noindex") || content.includes("none");
+}
+function countWords(html: string) {
+  // ตัดสคริปต์/สไตล์/แท็ก แล้วนับคำอย่างหยาบ
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return 0;
+  return text.split(/\s+/).length;
+}
+function countAltCoverage(html: string) {
+  const imgs = html.match(/<img\b[^>]*>/gi) || [];
+  if (imgs.length === 0) return 0;
+  let withAlt = 0;
+  for (const tag of imgs) {
+    if (/alt=["'][^"']+["']/i.test(tag)) withAlt++;
+  }
+  return Math.round((withAlt / imgs.length) * 100);
+}
+function countLinks(html: string) {
+  const anchors = html.match(/<a\b[^>]*href=["'][^"']+["'][^>]*>/gi) || [];
+  let internal = 0;
+  let external = 0;
+  for (const tag of anchors) {
+    const href = (tag.match(/href=["']([^"']+)["']/i) || [])[1] || "";
+    if (/^https?:\/\//i.test(href)) external++;
+    else internal++;
+  }
+  return { internal, external };
+}
+
+
+
+// -------------------------------------------------------
+// ✅ Action: สแกนหน้าเว็บจริง -> อัปเดตฟิลด์เช็กลิสต์ของ Page
+// -------------------------------------------------------
+export async function scrapeRealPageAction(formData: FormData) {
+  "use server";
+  const pageId = String(formData.get("pageId") || "");
+  const projectId = String(formData.get("projectId") || "");
+  const ok = await ensureOwner(projectId);
+  if (!ok) throw new Error("Unauthorized");
+
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { id: true, pageUrl: true },
+  });
+  if (!page?.pageUrl) throw new Error("Page URL not found");
+
+  const targetUrl = toAbsoluteUrl(ok.siteUrl, page.pageUrl);
+
+  // fetch HTML
+  const res = await fetch(targetUrl, { cache: "no-store" });
+  const html = await res.text();
+
+  // extract
+  const title = pickTitle(html);
+  const metaDesc =
+    pickMeta(html, "description") || pickMeta(html, "og:description");
+  const h1 = pickH1(html);
+  const canonicalHref = pickCanonical(html);
+  const robotsNoindex = pickRobotsNoindex(html);
+  const wordCount = countWords(html);
+  const altPct = countAltCoverage(html);
+  const { internal, external } = countLinks(html);
+
+  // ประเมินค่าเช็กลิสต์ชุด on-page จาก schema เดิม
+  const seoTitlePresent = !!title;
+  const seoTitleLengthOk =
+    title.length >= 30 && title.length <= 60 ? true : false;
+  const seoH1Present = !!h1;
+  const seoCanonicalPresent = !!canonicalHref;
+  const absTarget = new URL(targetUrl);
+  let canonicalSelfReferential = false;
+  try {
+    const absCanon = new URL(canonicalHref, absTarget.origin);
+    canonicalSelfReferential = absCanon.href.replace(/\/$/, "") === absTarget.href.replace(/\/$/, "");
+  } catch {
+    canonicalSelfReferential = false;
+  }
+
+  // เขียนค่าลง DB (อัปเดตเฉพาะฟิลด์ checklist/metric ที่มีใน schema)
+  await prisma.page.update({
+    where: { id: pageId },
+    data: {
+      // ถ้าอยากเขียน metaDesc ที่ดึงได้ทับ ก็ทำได้ (ขึ้นกับ UX; ที่นี่ไม่ทับค่าเดิมถ้าเคยกรอกไว้)
+      pageMetaDescription: metaDesc || undefined,
+
+      seoTitlePresent,
+      seoTitleLengthOk,
+      seoH1Present,
+      seoCanonicalPresent,
+      seoCanonicalSelfReferential: canonicalSelfReferential,
+      seoRobotsNoindex: robotsNoindex,
+
+      // ไฟล์ด์ metric
+      seoWordCount: wordCount,
+      seoAltTextCoveragePct: altPct,
+      seoInternalLinks: internal,
+      seoExternalLinks: external,
+
+      // หมายเหตุ: ฟิลด์ seoMobileFriendly / seoSitemapIncluded / seoStructuredDataPresent / seoHreflangValid
+      // ยังไม่ได้ตรวจแบบลึกในตัวอย่างนี้
+    },
+  });
 
   revalidatePath(`/app/projects/${projectId}`);
 }

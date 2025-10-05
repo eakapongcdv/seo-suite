@@ -336,7 +336,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 </form>
               </div>
 
-              <div className="">
+              <div className="grid gap-3 md:grid-cols-2">
                 {/* Live capture */}
                 <div>
                   <div className="mb-1 text-xs font-medium text-gray-700">Live Capture</div>
@@ -357,6 +357,25 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                   </div>
                 </div>
 
+                {/* Figma capture for side-by-side comparison */}
+                <div>
+                  <div className="mb-1 text-xs font-medium text-gray-700">Figma Capture</div>
+                  <div className="aspect-[4/3] overflow-hidden rounded-md border bg-gray-50">
+                    {page.figmaCaptureUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={page.figmaCaptureUrl}
+                        alt="Figma capture"
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
+                        No capture
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Some quick scraped metrics if available */}
