@@ -3,13 +3,13 @@ import Link from "next/link";
 import {
   Save as SaveIcon,
   Trash2,
-  RefreshCw,
   Sparkles,
   ChevronDown,
   ExternalLink,
 } from "lucide-react";
 import SeoChecklist from "./SeoChecklist";
 import Circular from "./Circular";
+import PendingSpinnerIcon from "@/app/components/PendingSpinnerIcon";
 
 import {
   updatePageAction,
@@ -175,7 +175,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 title="Sync Figma"
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <RefreshCw className="h-4 w-4" />
+                <PendingSpinnerIcon />
                 <span className="sr-only">Sync Figma</span>
               </button>
             </form>
@@ -345,7 +345,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                     title="Refresh Lighthouse"
                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                   >
-                    <RefreshCw className="h-4 w-4" />
+                    <PendingSpinnerIcon />
                   </button>
                 </form>
               </div>
@@ -356,59 +356,6 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 <Circular value={Number(page?.lighthouseAccessibility ?? 0)} label="A11y" />
               </div>
 
-              {/* ฟอร์มแก้ไขค่าคะแนน (manual override) */}
-              <form action={updatePageAction} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <input type="hidden" name="id" value={page?.id} />
-                <input type="hidden" name="projectId" value={projectId} />
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700">SEO</label>
-                  <input
-                    name="lighthouseSeo"
-                    type="number"
-                    min={0}
-                    max={100}
-                    defaultValue={page?.lighthouseSeo ?? ""}
-                    placeholder="0-100"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700">Performance</label>
-                  <input
-                    name="lighthousePerf"
-                    type="number"
-                    min={0}
-                    max={100}
-                    defaultValue={page?.lighthousePerf ?? ""}
-                    placeholder="0-100"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700">Accessibility</label>
-                  <input
-                    name="lighthouseAccessibility"
-                    type="number"
-                    min={0}
-                    max={100}
-                    defaultValue={page?.lighthouseAccessibility ?? ""}
-                    placeholder="0-100"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div className="sm:col-span-3 flex justify-end">
-                  <button
-                    type="submit"
-                    aria-label="Save Lighthouse"
-                    title="Save Lighthouse"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <SaveIcon className="h-4 w-4" />
-                    <span className="sr-only">Save Lighthouse</span>
-                  </button>
-                </div>
-              </form>
             </div>
           </div>
 
