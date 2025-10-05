@@ -618,3 +618,163 @@ export async function scrapeRealPageAction(formData: FormData) {
 
   revalidatePath(`/app/projects/${projectId}`);
 }
+
+
+/**
+ * รัน OpenAI วิเคราะห์ SEO ของเพจ แล้วบันทึกเป็นภาษาไทยลง page.aiSeoInsight
+ * ใช้ข้อมูลจาก: Figma text, meta/keywords, scraped metrics, lighthouse (ถ้ามี)
+ */
+export async function aiSeoInsightAction(formData: FormData) {
+  "use server";
+
+  const pageId = String(formData.get("pageId") || "");
+  const projectId = String(formData.get("projectId") || "");
+  if (!pageId || !projectId) throw new Error("Missing pageId or projectId");
+
+  const ok = await ensureOwner(projectId);
+  if (!ok) throw new Error("Unauthorized");
+
+  // ดึงข้อมูลหน้าและโปรเจ็กต์เพื่อทำ context
+  const [project, page] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { siteName: true, siteUrl: true, targetLocale: true },
+    }),
+    prisma.page.findUnique({
+      where: { id: pageId },
+      select: {
+        pageName: true,
+        pageUrl: true,
+        pageDescriptionSummary: true,
+        pageMetaDescription: true,
+        pageSeoKeywords: true,
+        figmaTextContent: true,
+        // scraped metrics (ตามสคีมาล่าสุด)
+        seoTitlePresent: true,
+        seoTitleLengthOk: true,
+        seoH1Present: true,
+        seoCanonicalPresent: true,
+        seoCanonicalSelfReferential: true,
+        seoRobotsNoindex: true,
+        seoWordCount: true,
+        seoAltTextCoveragePct: true,
+        seoInternalLinks: true,
+        seoExternalLinks: true,
+        // lighthouse
+        lighthousePerf: true,
+        lighthouseSeo: true,
+        lighthouseAccessibility: true,
+        // (optionals)
+        realCaptureUrl: true,
+      },
+    }),
+  ]);
+
+  if (!project || !page) throw new Error("Project or Page not found");
+
+  // เตรียม context ปลอดภัย (จำกัดความยาวกัน prompt overflow)
+  const figmaText = (page.figmaTextContent || "").slice(0, 8000);
+  const summary = (page.pageDescriptionSummary || "").slice(0, 1000);
+  const metaDesc = (page.pageMetaDescription || "").slice(0, 600);
+  const kw = (page.pageSeoKeywords || []).slice(0, 40);
+
+  // ถ้าไม่มี API key ให้บันทึกข้อความกำกับแทน
+  if (!process.env.OPENAI_API_KEY) {
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        aiSeoInsight:
+          "ไม่พบ OPENAI_API_KEY ในสภาพแวดล้อม จึงไม่สามารถวิเคราะห์ด้วย AI ได้ในตอนนี้",
+      },
+    });
+    revalidatePath(`/app/projects/${projectId}`);
+    return;
+  }
+
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const prompt = [
+    "คุณเป็นผู้เชี่ยวชาญ SEO ของ Google (ตอบเป็นภาษาไทย กระชับแต่ชัดเจน พร้อมเช็กลิสต์ที่ลงมือทำได้ทันที).",
+    "",
+    "## บริบทโปรเจ็กต์",
+    `- ชื่อไซต์: ${project.siteName || "-"} | URL หลัก: ${project.siteUrl || "-"}`,
+    `- เป้าหมายภาษา/โลเคล: ${project.targetLocale || "-"}`,
+    "",
+    "## บริบทเพจ",
+    `- Page name: ${page.pageName}`,
+    `- Page URL: ${page.pageUrl}`,
+    `- Content summary: ${summary || "(ไม่มี)"}`,
+    `- Meta description: ${metaDesc || "(ไม่มี)"}`,
+    `- SEO keywords (ตั้งค่า): ${kw.join(", ") || "(ยังไม่ได้ตั้ง)"}`,
+    "",
+    "## ข้อมูลจาก Figma (ข้อความดึงจากดีไซน์):",
+    figmaText || "(ไม่มีข้อมูล)",
+    "",
+    "## Metrics (Scraped/Heuristics)",
+    `- Title present: ${bool(page.seoTitlePresent)}`,
+    `- Title length ok: ${bool(page.seoTitleLengthOk)}`,
+    `- H1 present: ${bool(page.seoH1Present)}`,
+    `- Canonical tag: ${bool(page.seoCanonicalPresent)} | self-referential: ${bool(page.seoCanonicalSelfReferential)}`,
+    `- robots noindex: ${bool(page.seoRobotsNoindex)}`,
+    `- Word count: ${page.seoWordCount ?? "-"}`,
+    `- ALT coverage: ${percent(page.seoAltTextCoveragePct)}`,
+    `- Internal links: ${page.seoInternalLinks ?? 0} | External links: ${page.seoExternalLinks ?? 0}`,
+    "",
+    "## Lighthouse (0–100)",
+    `- SEO: ${num(page.lighthouseSeo)} | Perf: ${num(page.lighthousePerf)} | Accessibility: ${num(page.lighthouseAccessibility)}`,
+    "",
+    "### งานของคุณ",
+    "- วิเคราะห์เพจนี้ว่าคีย์เวิร์ดหลักน่าจะเป็นอะไร (จาก Figma text + meta/keywords ปัจจุบัน) และเหตุผลแบบสั้น",
+    "- ให้รายการ **ปัญหา/ความเสี่ยง** (technical + content) ที่ส่งผลต่ออันดับ",
+    "- ให้ **คำแนะนำที่ทำได้ทันที** (quick wins) เป็นข้อ ๆ เช่น ปรับ title/H1/meta/คีย์เวิร์ด/คอนเทนต์/ลิงก์/ภาพ/โครงสร้างข้อมูล",
+    "- ให้ **คำแนะนำเชิงเทคนิค** (ถ้ามี) เช่น canonical, hreflang, indexing, performance/core web vitals",
+    "- ถ้าควรอัปเดต Meta Description ให้เขียนตัวอย่างใหม่ 1–2 แบบ (~150–160 ตัวอักษร) โดยสอดคล้องกับคีย์เวิร์ดหลัก",
+    "",
+    "รูปแบบคำตอบ (ภาษาไทย):",
+    "1) ภาพรวม/คีย์เวิร์ดหลัก",
+    "2) ปัญหา/ความเสี่ยง",
+    "3) Quick wins (ทำได้ทันที)",
+    "4) แนะนำเชิงเทคนิค",
+    "5) ตัวอย่าง Meta Description (ถ้าจำเป็น)",
+  ].join("\n");
+
+  try {
+    const chat = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: "คุณเป็นผู้ช่วย SEO เชิงปฏิบัติที่ให้คำตอบภาษาไทย อ่านง่าย ทำตามได้จริง" },
+        { role: "user", content: prompt },
+      ],
+    });
+
+    const content = chat.choices?.[0]?.message?.content?.trim() || "";
+    await prisma.page.update({
+      where: { id: pageId },
+      data: { aiSeoInsight: content || "ไม่สามารถสร้างคำแนะนำได้ในขณะนี้" },
+    });
+
+    revalidatePath(`/app/projects/${projectId}`);
+  } catch (err: any) {
+    console.error("[aiSeoInsightAction] OpenAI error:", err?.message || err);
+    await prisma.page.update({
+      where: { id: pageId },
+      data: {
+        aiSeoInsight:
+          "เกิดข้อผิดพลาดระหว่างวิเคราะห์ด้วย AI: " + (err?.message || String(err)),
+      },
+    });
+    revalidatePath(`/app/projects/${projectId}`);
+  }
+
+  // helpers ภายในฟังก์ชัน
+  function bool(v?: boolean | null) {
+    return v ? "yes" : "no";
+  }
+  function num(v?: number | null) {
+    return typeof v === "number" ? v : "-";
+  }
+  function percent(v?: number | null) {
+    return typeof v === "number" ? `${v}%` : "-";
+    }
+}

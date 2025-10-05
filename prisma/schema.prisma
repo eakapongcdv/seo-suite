@@ -96,10 +96,15 @@ model Page {
   figmaCapturedAt  DateTime?
   figmaTextContent String?   @db.Text
 
+// --- Live page capture (NEW) ---
+  realCaptureUrl   String?    
+
   // --- Lighthouse (optional aggregates) ---
   lighthousePerf          Int?
   lighthouseSeo           Int?
   lighthouseAccessibility Int?
+
+  aiSeoInsight String? @db.Text
 
   // --- On-page SEO checklist ---
   seoTitlePresent             Boolean @default(false)

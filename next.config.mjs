@@ -2,8 +2,12 @@
 const nextConfig = {
   experimental: {
     esmExternals: 'loose',
-    // 👇 ให้ Next โหลดแพ็กเกจเหล่านี้แบบ external บนฝั่ง server (ไม่พยายาม bundle)
-    serverComponentsExternalPackages: ['lighthouse', 'chrome-launcher'],
+    serverComponentsExternalPackages: [
+      'lighthouse',
+      'chrome-launcher',
+      'playwright-core',   // ⬅️ ใส่เพิ่ม
+      'playwright',        // (optional) ถ้าคุณลงตัวเต็ม
+    ],
   },
   images: {
     remotePatterns: [
@@ -12,6 +16,10 @@ const nextConfig = {
       { protocol: "https", hostname: "figma-alpha-api.s3.us-west-2.amazonaws.com" },
       { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
+  },
+  webpack: (config) => {
+    config.externals.push('electron'); // ตามที่คุณใส่ไว้ก่อนหน้า
+    return config;
   },
 };
 export default nextConfig;

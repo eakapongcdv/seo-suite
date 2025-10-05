@@ -10,10 +10,10 @@ import {
 } from "lucide-react";
 
 import SubmitButton from "@/app/components/SubmitButton";
+import PendingSpinnerIcon from "@/app/components/PendingSpinnerIcon";
 
 import SeoChecklist from "./SeoChecklist";
 import Circular from "./Circular";
-import PendingSpinnerIcon from "@/app/components/PendingSpinnerIcon";
 
 import {
   updatePageAction,
@@ -22,6 +22,7 @@ import {
   recommendSeoKeywordsAction,
   refreshLighthouseAction,
   scrapeRealPageAction,
+  aiSeoInsightAction, // ⬅️ NEW
 } from "../actions";
 
 type PageRowProps = {
@@ -41,14 +42,14 @@ type PageRowProps = {
     figmaCapturedAt: Date | string | null;
     figmaTextContent: string | null;
 
-    // live site (optional) – screenshot URL from scraping action
+    // live site (optional)
     realCaptureUrl?: string | null;
 
     lighthousePerf: number | null;
     lighthouseSeo: number | null;
     lighthouseAccessibility: number | null;
 
-    // optional scraped metrics (schema has these; keep them optional in props)
+    // scraped metrics (optional)
     seoTitlePresent?: boolean | null;
     seoTitleLengthOk?: boolean | null;
     seoH1Present?: boolean | null;
@@ -59,6 +60,9 @@ type PageRowProps = {
     seoAltTextCoveragePct?: number | null;
     seoInternalLinks?: number | null;
     seoExternalLinks?: number | null;
+
+    // ⬅️ NEW: เก็บข้อความ insight ที่ได้จาก AI
+    aiSeoInsight?: string | null;
 
     updatedAt: Date | string;
   };
@@ -165,7 +169,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
 
         {/* 50 / 50 layout */}
         <div className="grid grid-cols-1 gap-4 p-3 md:grid-cols-12">
-          {/* LEFT 50% — Figma, Extracted text, Meta, SEO Keywords (editable tags UI) */}
+          {/* LEFT 50% — Figma, Extracted text, Meta, SEO Keywords */}
           <div className="md:col-span-6 space-y-3">
             {/* Figma Sync + AI Recommend */}
             <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-12">
@@ -189,9 +193,9 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 </button>
               </form>
 
-              {/* AI Recommend SEO Keywords */}
-             <form action={recommendSeoKeywordsAction} className="md:col-span-4 flex justify-end">
-                <input type="hidden" name="pageId" value={page?.id} />
+              {/* AI Recommend SEO Keywords (autofill meta + keywords) */}
+              <form action={recommendSeoKeywordsAction} className="md:col-span-4 flex justify-end">
+                <input type="hidden" name="pageId" value={page.id} />
                 <input type="hidden" name="projectId" value={projectId} />
                 <SubmitButton
                   aria-label="AI: SEO Keyword Recommend"
@@ -203,7 +207,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
               </form>
             </div>
 
-            {/* Capture Preview + Extracted Text (raw) under it */}
+            {/* Capture Preview + Extracted Text (raw) */}
             <div>
               <div className="mb-1 text-sm font-medium text-gray-800">Capture Preview (Figma)</div>
               {page.figmaCaptureUrl ? (
@@ -227,23 +231,31 @@ export default function PageRow({ projectId, page }: PageRowProps) {
 
             {/* Meta Tags */}
             <div className="rounded-xl border border-gray-200 bg-white p-3">
-              <div className="mb-2 text-sm font-medium text-gray-900">Meta Tags</div>
-              <form action={updatePageAction} className="grid grid-cols-1 gap-3">
-                <input type="hidden" name="id" value={page.id} />
-                <input type="hidden" name="projectId" value={projectId} />
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-900">Meta Tags</div>
+                <button
+                  formAction={updatePageAction as any}
+                  aria-label="Save Meta"
+                  title="Save Meta"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                >
+                  <SaveIcon className="h-4 w-4" />
+                </button>
+              </div>
 
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700">Content Summary</label>
+              <div className="grid grid-cols-1 gap-3">
+                <input type="hidden" name="id" value={page.id} form="meta-form" />
+                <input type="hidden" name="projectId" value={projectId} form="meta-form" />
+
+                {/* ใช้ form ที่มี id เพื่อให้ปุ่มด้านบนส่งได้ */}
+                <form id="meta-form" action={updatePageAction} className="grid grid-cols-1 gap-3">
                   <textarea
                     name="pageDescriptionSummary"
                     defaultValue={page.pageDescriptionSummary ?? ""}
                     rows={2}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                    placeholder="Short content summary"
                   />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700">Meta Description</label>
                   <textarea
                     name="pageMetaDescription"
                     defaultValue={page.pageMetaDescription ?? ""}
@@ -251,27 +263,16 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                     placeholder="Ideal 150–160 chars with primary keywords"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
                   />
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    aria-label="Save Meta"
-                    title="Save Meta"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
-                  >
-                    <SaveIcon className="h-4 w-4" />
-                    <span className="sr-only">Save Meta</span>
-                  </button>
-                </div>
-              </form>
+                  {/* Hidden field for SEO keywords if AI autofill sets it */}
+                  <input type="hidden" name="pageSeoKeywords" defaultValue={(page.pageSeoKeywords ?? []).join(", ")} />
+                </form>
+              </div>
             </div>
 
-            {/* SEO Keywords — editable while showing tags */}
+            {/* SEO Keywords — tags + editor */}
             <div className="rounded-xl border border-gray-200 bg-white p-3">
               <div className="mb-2 text-sm font-medium text-gray-900">SEO Keywords</div>
 
-              {/* Tags (readable) */}
               <div className="min-h-[44px] rounded-md border bg-gray-50 p-2">
                 {page.pageSeoKeywords?.length ? (
                   <div className="flex flex-wrap gap-1.5">
@@ -289,13 +290,12 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 )}
               </div>
 
-              {/* Editor: a single input that holds the list (no “comma” label shown) */}
               <form action={updatePageAction} className="mt-2 flex items-end gap-2">
                 <input type="hidden" name="id" value={page.id} />
                 <input type="hidden" name="projectId" value={projectId} />
                 <div className="flex-1">
                   <label className="mb-1 block text-xs font-medium text-gray-700">
-                    Edit keywords (you can type and separate with commas)
+                    Edit keywords (separate with commas)
                   </label>
                   <input
                     name="pageSeoKeywords"
@@ -316,7 +316,7 @@ export default function PageRow({ projectId, page }: PageRowProps) {
             </div>
           </div>
 
-          {/* RIGHT 50% — Live page (screenshot), Lighthouse */}
+          {/* RIGHT 50% — Live page + Lighthouse + AI Insight */}
           <div className="md:col-span-6 space-y-3">
             {/* Live Page (scraped) with screenshot */}
             <div className="rounded-xl border border-gray-200 bg-white p-3">
@@ -325,41 +325,36 @@ export default function PageRow({ projectId, page }: PageRowProps) {
                 <form action={scrapeRealPageAction}>
                   <input type="hidden" name="pageId" value={page.id} />
                   <input type="hidden" name="projectId" value={projectId} />
-                  <button
-                    type="submit"
+                  <SubmitButton
                     aria-label="Scrape URL"
                     title="Scrape URL"
                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                   >
-                    <PendingSpinnerIcon />
-                  </button>
+                    <RefreshCw className="h-4 w-4" />
+                  </SubmitButton>
                 </form>
               </div>
 
-              <div className="">
-                {/* Live capture */}
-                <div>
-                  <div className="mb-1 text-xs font-medium text-gray-700">Live Capture</div>
-                  <div className="aspect-[4/3] overflow-hidden rounded-md border bg-gray-50">
-                    {page.realCaptureUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={page.realCaptureUrl}
-                        alt="Live page capture"
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
-                        No live capture yet
-                      </div>
-                    )}
-                  </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-gray-700">Live Capture</div>
+                <div className="aspect-[4/3] overflow-hidden rounded-md border bg-gray-50">
+                  {page.realCaptureUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={page.realCaptureUrl}
+                      alt="Live page capture"
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
+                      No live capture yet
+                    </div>
+                  )}
                 </div>
-
               </div>
 
-              {/* Some quick scraped metrics if available */}
+              {/* quick scraped metrics */}
               <ul className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                 <li>
                   Meta description:{" "}
@@ -387,22 +382,47 @@ export default function PageRow({ projectId, page }: PageRowProps) {
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-medium text-gray-900">Lighthouse Scores</div>
                 <form action={refreshLighthouseAction}>
-                <input type="hidden" name="pageId" value={page?.id} />
-                <input type="hidden" name="projectId" value={projectId} />
-                <SubmitButton
-                  aria-label="Refresh Lighthouse"
-                  title="Refresh Lighthouse"
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </SubmitButton>
-              </form>
+                  <input type="hidden" name="pageId" value={page.id} />
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton
+                    aria-label="Refresh Lighthouse"
+                    title="Refresh Lighthouse"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </SubmitButton>
+                </form>
               </div>
 
               <div className="mb-2 flex gap-3">
                 <Circular value={Number(page.lighthouseSeo ?? 0)} label="SEO" />
                 <Circular value={Number(page.lighthousePerf ?? 0)} label="Perf" />
                 <Circular value={Number(page.lighthouseAccessibility ?? 0)} label="A11y" />
+              </div>
+            </div>
+
+            {/* ⬇️ NEW: AI SEO Insight */}
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-900">AI SEO Insight</div>
+                <form action={aiSeoInsightAction}>
+                  <input type="hidden" name="pageId" value={page.id} />
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton
+                    aria-label="Re-run analysis"
+                    title="Re-run analysis"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Sparkles className="mr-1 h-4 w-4" />
+                    วิเคราะห์ใหม่
+                  </SubmitButton>
+                </form>
+              </div>
+
+              <div className="rounded-md border bg-gray-50 p-3 text-sm whitespace-pre-wrap">
+                {page.aiSeoInsight?.trim()
+                  ? page.aiSeoInsight
+                  : "ยังไม่มีสรุปจาก AI — กด “วิเคราะห์ใหม่” เพื่อสร้างคำแนะนำการปรับปรุง SEO (ภาษาไทย)."}
               </div>
             </div>
           </div>
