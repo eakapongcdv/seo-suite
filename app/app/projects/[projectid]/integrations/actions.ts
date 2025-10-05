@@ -338,36 +338,34 @@ function extractGoogleAdsError(err: any): string {
   return parts.join(" | ");
 }
 
-/** … (โค้ดส่วนอื่น ๆ คงเดิม) … */
+// ===== helper: แปลง error ของ Google Ads ให้อ่านง่าย =====
+function prettyGoogleAdsError(err: any): string {
+  try {
+    // แพ็กเกจ google-ads-api มักคืน err.meta.body หรือ err.errors
+    const body = err?.meta?.body || err;
+    if (typeof body === "string") return body;
+    if (body?.errors && Array.isArray(body.errors)) {
+      return JSON.stringify(body, null, 2);
+    }
+    if (err?.message) return err.message;
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
-/**
- * ปุ่ม "Test API" — ทดสอบ Google Ads:
- * 1) GAQL ดู customer
- * 2) ลอง avg_monthly_searches ของ "iphone 17 pro max"
- * บันทึกผลย่อใน errorMsg ของ integration เพื่อโชว์บน UI
- */
+/** ========== ทดสอบ credential แบบไม่ throw ========== */
+// - ถ้าสำเร็จ: เคลียร์ errorMsg (null) และอัพเดต lastSyncAt เพื่อให้ UI เห็นว่าเพิ่งทดสอบผ่าน
+// - ถ้าล้มเหลว: เซฟ errorMsg (แสดงบน UI) แล้ว revalidate; **ไม่ throw**
 export async function testRankApiGoogle(formData: FormData) {
   const projectId = String(formData.get("projectId") || "");
-  if (!projectId) throw new Error("Missing projectId");
-
-  const session = await auth();
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true, ownerId: true, targetLocale: true },
-  });
-  if (!session?.user?.id || !project || project.ownerId !== session.user.id) {
-    throw new Error("Unauthorized");
-  }
-
-  // เลือกภาษาสำหรับ keyword planner จาก targetLocale
-  const locale = (project.targetLocale || "th").toLowerCase();
-  const language_code: "th" | "en" | "zh" =
-    locale.startsWith("th") ? "th" : locale.startsWith("zh") ? "zh" : "en";
+  await ensureOwner(projectId);
 
   try {
-    const { customer } = await getGoogleAdsClientForProject(projectId);
+    // 1) ดึง client + ตรวจฐาน
+    const { customer } = await (await import("@/lib/googleAds")).getGoogleAdsClientForProject(projectId);
 
-    // 1) GAQL: ยืนยันสิทธิ์
+    // 2) ping ลูกค้า (ยืนยันสิทธิ์ + CID ใช้ได้)
     const rows = await customer.query(`
       SELECT
         customer.resource_name,
@@ -376,40 +374,71 @@ export async function testRankApiGoogle(formData: FormData) {
       FROM customer
       LIMIT 1
     `);
-    const c = rows?.[0]?.customer;
 
-    // 2) Keyword Planner: avg_monthly_searches
-    const sampleKeyword = "iphone 17 pro max";
-    const volumes = await fetchAvgMonthlySearches(projectId, [sampleKeyword], {
-      language_code,
-      // geo_target_constants: ["geoTargetConstants/2392"], // TH
-    });
-    const vol = volumes.find((v) => v.keyword.toLowerCase() === sampleKeyword.toLowerCase());
-    const volNum = vol?.avgMonthlySearches ?? 0;
-
-    const msg = `Test OK — customer=${c?.descriptive_name || c?.resource_name || "?"} | "${sampleKeyword}" avg_monthly_searches=${volNum} (lang=${language_code})`;
-
-    await prisma.projectIntegration.update({
-      where: { projectId_type: { projectId, type: "RANK_API" } },
-      data: { lastSyncAt: new Date(), errorMsg: msg },
-    });
-
-    revalidatePath(`/app/projects/${projectId}/integrations`);
-  } catch (err: any) {
-    // ดึงข้อความ error แบบอ่านง่าย
-    const pretty = extractGoogleAdsError(err);
-    console.error("[RANK_API][TEST] ERROR (pretty):", pretty);
-    console.dir(err, { depth: 6 });
-
-    // เซฟลง UI เพื่อดีบัก
+    // 3) ลองขอไอเดีย (ตัวอย่าง: iphone 17 pro max)
+    //    ถ้า developer token ถูกจำกัด test-only ก็จะ error (เช่น DEVELOPER_TOKEN_NOT_APPROVED)
     try {
+      const { fetchAvgMonthlySearches } = await import("@/lib/googleAds");
+      await fetchAvgMonthlySearches(projectId, ["iphone 17 pro max"], {
+        language_code: "th",
+        // Thailand
+        geo_target_constants: ["geoTargetConstants/2392"],
+      });
+    } catch (inner) {
+      // ถ้า Keyword Ideas ใช้ไม่ได้ (เช่น developer token ไม่ approved) ก็ถือว่ายังเชื่อมได้
+      // แต่แจ้งใน errorMsg เพื่อให้ user รู้ว่าต้องขอสิทธิ์เพิ่ม
+      const msg = prettyGoogleAdsError(inner);
       await prisma.projectIntegration.update({
         where: { projectId_type: { projectId, type: "RANK_API" } },
-        data: { errorMsg: `Test failed: ${pretty}` },
+        data: {
+          // เชื่อมต่อ credential ผ่าน (ไม่ error credentials) แต่ฟีเจอร์ keyword planner อาจถูกจำกัด
+          status: "ACTIVE",
+          errorMsg:
+            "Connected, but Keyword Planner is restricted: " +
+            msg +
+            " — Apply for Basic/Standard access for developer token if needed.",
+          lastSyncAt: new Date(),
+        },
       });
-    } catch {}
+      revalidatePath(`/app/projects/${projectId}/integrations`);
+      return { ok: true, note: "Connected but keyword planner restricted" };
+    }
+
+    // 4)เคลียร์ errorMsg ถ้าทุกอย่างผ่าน
+    await prisma.projectIntegration.update({
+      where: { projectId_type: { projectId, type: "RANK_API" } },
+      data: {
+        status: "ACTIVE",
+        errorMsg: null,
+        lastSyncAt: new Date(),
+      },
+    });
 
     revalidatePath(`/app/projects/${projectId}/integrations`);
-    throw new Error(`Google Ads test failed: ${pretty}`);
+    return { ok: true };
+  } catch (err) {
+    const msg = prettyGoogleAdsError(err);
+
+    // ✅ ไม่ throw — บันทึก errorMsg ให้ UI แสดง
+    await prisma.projectIntegration.upsert({
+      where: { projectId_type: { projectId, type: "RANK_API" } },
+      create: {
+        projectId,
+        type: "RANK_API",
+        status: "INACTIVE",
+        connectedAt: null,
+        connectedBy: await ensureOwner(projectId),
+        propertyUri: null,
+        config: {},
+        errorMsg: msg,
+      },
+      update: {
+        status: "INACTIVE",
+        errorMsg: msg,
+      },
+    });
+
+    revalidatePath(`/app/projects/${projectId}/integrations`);
+    return { ok: false, error: msg };
   }
 }
