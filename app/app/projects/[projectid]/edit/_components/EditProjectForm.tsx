@@ -22,8 +22,6 @@ export default function EditProjectForm({
     siteUrl: string;
     targetLocale: string;
     includeBaidu: boolean;
-    figmaFileKey?: string | null;
-    figmaAccessToken?: string | null;
   };
 }) {
   const router = useRouter();
@@ -33,10 +31,7 @@ export default function EditProjectForm({
     (project.targetLocale as TargetLocale) || "en"
   );
   const [includeBaidu, setIncludeBaidu] = useState(!!project.includeBaidu);
-  const [figmaFileKey, setFigmaFileKey] = useState(project.figmaFileKey ?? "");
-  const [figmaAccessToken, setFigmaAccessToken] = useState(
-    project.figmaAccessToken ?? ""
-  );
+
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
@@ -56,8 +51,6 @@ export default function EditProjectForm({
           siteUrl,
           targetLocale,
           includeBaidu,
-          figmaFileKey: figmaFileKey || null,
-          figmaAccessToken: figmaAccessToken || null,
         }),
       });
 
@@ -139,32 +132,6 @@ export default function EditProjectForm({
             Include Baidu (China SEO)
           </label>
         </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700">
-          Figma File Key
-        </label>
-        <input
-          type="text"
-          className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-          value={figmaFileKey}
-          onChange={(e) => setFigmaFileKey(e.target.value)}
-          placeholder="e.g. AbCdEfGhIjK..."
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700">
-          Figma Access Token
-        </label>
-        <textarea
-          className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-          rows={3}
-          value={figmaAccessToken}
-          onChange={(e) => setFigmaAccessToken(e.target.value)}
-          placeholder="Personal access token from Figma"
-        />
       </div>
 
       <div className="flex justify-end gap-2">

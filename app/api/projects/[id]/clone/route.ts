@@ -36,8 +36,6 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       siteUrl: src.siteUrl,
       targetLocale: targetLocale,
       includeBaidu: src.includeBaidu,
-      figmaFileKey: src.figmaFileKey ?? null,
-      figmaAccessToken: src.figmaAccessToken ?? null,
     },
   });
 

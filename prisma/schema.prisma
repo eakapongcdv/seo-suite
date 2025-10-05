@@ -63,9 +63,6 @@ model Project {
   targetLocale String  @default("en")
   includeBaidu Boolean @default(false)
 
-  figmaFileKey     String?
-  figmaAccessToken String? @db.Text
-
   pages        Page[]
   integrations ProjectIntegration[]
   rankKeywords RankKeyword[]
@@ -98,8 +95,8 @@ model Page {
   figmaCapturedAt  DateTime?
   figmaTextContent String?   @db.Text
 
-// --- Live page capture (NEW) ---
-  realCaptureUrl   String?    
+  // --- Live page capture (NEW) ---
+  realCaptureUrl String?
 
   // --- Lighthouse (optional aggregates) ---
   lighthousePerf          Int?

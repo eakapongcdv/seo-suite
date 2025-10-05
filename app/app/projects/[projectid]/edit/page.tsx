@@ -32,8 +32,6 @@ export default async function EditProjectPage({
       siteUrl: true,
       targetLocale: true,
       includeBaidu: true,
-      figmaFileKey: true,
-      figmaAccessToken: true,
       _count: { select: { pages: true } },
       updatedAt: true,
       createdAt: true,

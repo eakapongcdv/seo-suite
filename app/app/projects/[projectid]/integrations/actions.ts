@@ -112,15 +112,6 @@ export async function upsertFigmaIntegration(formData: FormData) {
     },
   });
 
-  // ออปชัน: sync ลง Project เพื่อสะดวกใช้งาน
-  await prisma.project.update({
-    where: { id: projectId },
-    data: {
-      figmaFileKey: fileKey || null,
-      figmaAccessToken: token || null,
-    },
-  });
-
   revalidatePath(`/app/projects/${projectId}/integrations`);
 }
 

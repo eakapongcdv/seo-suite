@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   Save as SaveIcon,
   Trash2,
@@ -12,7 +13,6 @@ import {
 } from "lucide-react";
 
 import SubmitButton from "@/app/components/SubmitButton";
-import PendingSpinnerIcon from "@/app/components/PendingSpinnerIcon";
 
 import SeoChecklist from "./SeoChecklist";
 import Circular from "./Circular";
@@ -39,7 +39,6 @@ function mapLocaleToKeywordLang(locale: string | null | undefined): "en" | "th" 
 type PageRowProps = {
   projectId: string;
   projectTargetLocale?: string | null;
-  // ✅ รับสถานะการเชื่อมต่อระดับโปรเจกต์
   projectGscConnected?: boolean;
   projectBaiduConnected?: boolean;
   page: {
@@ -51,7 +50,6 @@ type PageRowProps = {
     pageDescriptionSummary: string | null;
     pageMetaDescription: string | null;
     pageSeoKeywords: string[] | null;
-    // ✅ เพิ่มให้ตรงกับ SeoChecklist.PageLike
     pageContentKeywords?: string[] | null;
 
     figmaNodeId: string | null;
@@ -84,7 +82,6 @@ type PageRowProps = {
     seoInternalLinks?: number | null;
     seoExternalLinks?: number | null;
 
-    // (optional flags จะถูก merge ตอนส่งเข้า SeoChecklist)
     gscConnected?: boolean | null;
     baiduConnected?: boolean | null;
 
@@ -103,6 +100,27 @@ export default function PageRow({
 }: PageRowProps) {
   const keywordLang = mapLocaleToKeywordLang(projectTargetLocale);
   const keywordLangLabel = keywordLang === "th" ? "ไทย" : keywordLang === "zh" ? "中文" : "English";
+
+  // === Figma sync error/pending state ===
+  const [figmaError, setFigmaError] = useState<string | null>(null);
+  const [figmaPending, setFigmaPending] = useState(false);
+
+  async function handleFigmaSyncSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setFigmaError(null);
+    setFigmaPending(true);
+    try {
+      const fd = new FormData(e.currentTarget);
+      const res = await syncFigmaAction(fd);
+      if (!res?.ok) {
+        setFigmaError(res?.error || "Figma sync failed");
+      }
+    } catch (err: any) {
+      setFigmaError(err?.message || "Figma sync failed");
+    } finally {
+      setFigmaPending(false);
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -205,22 +223,25 @@ export default function PageRow({
           {/* LEFT */}
           <div className="md:col-span-6 space-y-3">
             <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-12">
-              <form action={syncFigmaAction} className="md:col-span-8 flex gap-2">
+              {/* ⬇️ ใช้ onSubmit เพื่อรับผลลัพธ์และแสดง error */}
+              <form onSubmit={handleFigmaSyncSubmit} className="md:col-span-8 flex gap-2">
                 <input type="hidden" name="pageId" value={page.id} />
                 <input type="hidden" name="projectId" value={projectId} />
                 <input
                   name="figmaNodeId"
                   defaultValue={page.figmaNodeId ?? ""}
-                  placeholder="e.g., 1:23"
+                  placeholder='เช่น "1:23" หรือวาง URL ที่มี ?node-id=1-23'
                   className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
                 />
                 <button
                   type="submit"
                   aria-label="Sync Figma"
                   title="Sync Figma"
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+                  disabled={figmaPending}
+                  aria-busy={figmaPending}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
                 >
-                  <PendingSpinnerIcon />
+                  <RefreshCw className={`h-4 w-4 ${figmaPending ? "animate-spin" : ""}`} />
                 </button>
               </form>
 
@@ -237,6 +258,11 @@ export default function PageRow({
                 </SubmitButton>
               </form>
             </div>
+
+            {/* ⬇️ แสดง error เมื่อ sync ไม่ผ่าน */}
+            {figmaError && (
+              <p className="text-xs text-red-600">{figmaError}</p>
+            )}
 
             <div>
               <div className="mb-1 text-sm font-medium text-gray-800">Capture Preview (Figma)</div>
@@ -381,9 +407,7 @@ export default function PageRow({
                 </div>
               </div>
 
-              {/* SEO-related live details ... (คงเดิม) */}
               <div className="mt-3 grid grid-cols-1 gap-3">
-                {/* ...ตัดเพื่อย่อ... */}
                 <ul className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                   <li>Title present: {page.seoTitlePresent ? "yes" : "no"}</li>
                   <li>Title length ok: {page.seoTitleLengthOk ? "yes" : "no"}</li>
@@ -458,7 +482,6 @@ export default function PageRow({
               )}
             </div>
 
-            {/* ✅ เปลี่ยนมาใช้รูปแบบ Method B: ส่ง page เข้าไปให้ SeoChecklist */}
             <SeoChecklist
               page={{
                 ...page,
@@ -466,7 +489,6 @@ export default function PageRow({
                 gscConnected: !!projectGscConnected,
                 baiduConnected: !!projectBaiduConnected,
               }}
-              strictLighthouse
               title="SEO Checklist"
             />
           </div>

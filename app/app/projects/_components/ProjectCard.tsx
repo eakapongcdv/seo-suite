@@ -50,8 +50,6 @@ export default function ProjectCard({
     siteUrl: string;
     targetLocale: string; // en | th | zh-CN
     includeBaidu: boolean;
-    figmaFileKey?: string | null;
-    figmaAccessToken?: string | null;
     _count: { pages: number };
     pages: Array<{
       id: string;

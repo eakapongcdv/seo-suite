@@ -30,8 +30,6 @@ export default async function ProjectsPage() {
       siteUrl: true,
       targetLocale: true,     // "en" | "th" | "zh-CN"
       includeBaidu: true,
-      figmaFileKey: true,
-      figmaAccessToken: true,
       updatedAt: true,
       _count: { select: { pages: true } },
       pages: {

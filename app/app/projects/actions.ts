@@ -25,10 +25,6 @@ export async function createProjectAction(formData: FormData) {
   // checkbox: ใน create ใช้ค่าจากฟอร์ม (มี value="true" เมื่อมีคีย์)
   const includeBaidu = String(formData.get("includeBaidu") || "false") === "true";
 
-  // NEW: Figma fields (ต่อโปรเจกต์)
-  const figmaFileKey = normStr(formData.get("figmaFileKey")) || null;
-  const figmaAccessToken = normStr(formData.get("figmaAccessToken")) || null;
-
   if (!siteName) throw new Error("siteName is required");
 
   await prisma.project.create({
@@ -38,9 +34,6 @@ export async function createProjectAction(formData: FormData) {
       siteUrl,
       targetLocale,
       includeBaidu,
-      // ฟิลด์ใหม่ (ต้องมีใน Prisma schema ด้วย)
-      figmaFileKey,
-      figmaAccessToken,
     },
   });
 
@@ -90,11 +83,6 @@ export async function updateProjectAction(formData: FormData) {
       ? formData.has("includeBaidu")
       : undefined;
 
-  // NEW: Figma fields (optional update)
-  const figmaFileKey = formData.has("figmaFileKey") ? normStr(formData.get("figmaFileKey")) ?? null : undefined;
-  const figmaAccessToken = formData.has("figmaAccessToken")
-    ? normStr(formData.get("figmaAccessToken")) ?? null
-    : undefined;
 
   await prisma.project.update({
     where: { id },
@@ -103,8 +91,6 @@ export async function updateProjectAction(formData: FormData) {
       ...(siteUrl !== undefined ? { siteUrl } : {}),
       ...(targetLocale !== undefined ? { targetLocale } : {}),
       ...(includeBaidu !== undefined ? { includeBaidu } : {}),
-      ...(figmaFileKey !== undefined ? { figmaFileKey } : {}),
-      ...(figmaAccessToken !== undefined ? { figmaAccessToken } : {}),
     },
   });
 

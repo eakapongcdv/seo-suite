@@ -36,8 +36,6 @@ type ProjectLite = {
   siteUrl: string;
   targetLocale: string; // TargetLocale
   includeBaidu: boolean;
-  figmaFileKey?: string | null;
-  figmaAccessToken?: string | null;
   updatedAt: string | Date;
   _count: { pages: number };
   pages: PageLite[];

@@ -2,20 +2,72 @@
 import { unstable_noStore as noStore } from "next/cache";
 import { prisma } from "@/lib/db";
 
-/** ========= ENV (Backward Compatibility) ========= */
-export const FIGMA_TOKEN = process.env.FIGMA_PERSONAL_ACCESS_TOKEN!;
-export const FIGMA_FILE_KEY = process.env.FIGMA_FILE_KEY!;
-export const EXPORT_FORMAT = (process.env.FIGMA_EXPORT_FORMAT || "png") as "png" | "jpg" | "svg";
-export const EXPORT_SCALE = Number(process.env.FIGMA_IMAGE_SCALE || 2);
-
 /** ========= Utils ========= */
 const mask = (s?: string | null) =>
   !s ? "(empty)" : s.length <= 8 ? "***" : `${s.slice(0, 4)}***${s.slice(-4)}`;
 
+/** ตรวจรูปแบบ node id แบบถูกต้อง (เช่น "12:345" หรือมีตัวอักษรเสริมก็ได้) */
+export function isValidNodeId(id: string) {
+  // ฟอร์แมตที่ API ยอมรับ: มักเป็น "digits:digits" หรือชุดอักษรตัวเลข/ตัวใหญ่/ตัวเล็ก/ขีดล่างต่อด้วย ":" แล้วตัวเลข/อักษร
+  // ใช้เกณฑ์กว้างพอสมควร
+  return /^[A-Za-z0-9_]+:[A-Za-z0-9_]+$/.test(id);
+}
+
+/** ดึง node-id จากสตริงอินพุต (รองรับ URL / 1-23 / 1%3A23 / 1:23) */
+export function parseNodeIdFromInput(raw: string): string {
+  const t = String(raw || "").trim();
+
+  // 1) ถ้าเป็น URL ของ Figma → ดึงพารามิเตอร์ node-id / nodeId / selection
+  if (/^https?:\/\/(www\.)?figma\.com\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      // ลองดึงจาก "node-id" ก่อน
+      let nodeParam =
+        u.searchParams.get("node-id") ||
+        u.searchParams.get("nodeId") ||
+        u.searchParams.get("selection") ||
+        "";
+
+      nodeParam = decodeURIComponent(nodeParam);
+
+      // รูปแบบที่เจอบ่อยใน URL: 1-23 → ต้องแปลงเป็น 1:23
+      if (/^[^:]+-[^:]+$/.test(nodeParam)) {
+        nodeParam = nodeParam.replace("-", ":");
+      }
+      if (isValidNodeId(nodeParam)) return nodeParam;
+    } catch {
+      // ตกมาให้ลองวิธีถัดไป
+    }
+  }
+
+  // 2) ถ้าอินพุตเป็น percent-encoded เช่น 1%3A23 → decode
+  let s = t;
+  try {
+    s = decodeURIComponent(t);
+  } catch {
+    /* ignore */
+  }
+
+  // 3) 1-23 → 1:23
+  if (/^[^:]+-[^:]+$/.test(s)) {
+    s = s.replace("-", ":");
+  }
+
+  // 4) ถ้าได้รูปแบบ valid แล้ว คืนค่าทันที
+  if (isValidNodeId(s)) return s;
+
+  // ไม่ผ่าน → โยน error พร้อมคำแนะนำ
+  throw new Error(
+    `Invalid Figma node id: "${raw}". Please paste a valid node id (e.g. "1:23") or a Figma URL containing "?node-id=...".`
+  );
+}
+
 /** URL ใช้ "2946-7183" แต่ API ต้อง "2946:7183" */
 export function normalizeNodeId(id: string) {
+  // คงไว้เพื่อ backward compat แต่ตอนนี้เราให้ parseNodeIdFromInput ช่วยก่อน
   const t = String(id || "").trim();
-  return t.includes("-") && !t.includes(":") ? t.replace("-", ":") : t;
+  if (/^[^:]+-[^:]+$/.test(t)) return t.replace("-", ":");
+  return t;
 }
 
 /** ========= Low-level fetcher ========= */
@@ -23,7 +75,7 @@ async function figmaFetch<T>(pathWithQuery: string, token: string): Promise<T> {
   noStore();
   const url = `https://api.figma.com/v1${pathWithQuery}`;
 
-  // Request log
+  // Request log (safe mask)
   console.log("[FIGMA] fetch →", {
     url,
     headers: { "X-Figma-Token": mask(token) },
@@ -59,7 +111,7 @@ async function figmaFetch<T>(pathWithQuery: string, token: string): Promise<T> {
   }
 }
 
-/** ========= Per-Project Credentials (from DB) ========= */
+/** ========= Per-Project Credentials (from DB: ProjectIntegration.config) ========= */
 export type FigmaCred = {
   token: string;
   fileKey: string;
@@ -67,6 +119,16 @@ export type FigmaCred = {
   scale?: number;
 };
 
+/**
+ * อ่าน config จาก ProjectIntegration (type=FIGMA, status=ACTIVE)
+ * ตัวอย่าง config:
+ * {
+ *   "scale": 1,
+ *   "token": "figd_***",
+ *   "format": "png",
+ *   "fileKey": "Y7POXMSBlGhvED21y8cB3q"
+ * }
+ */
 export async function getProjectFigmaCred(projectId: string): Promise<FigmaCred | null> {
   noStore();
   const integ = await prisma.projectIntegration.findFirst({
@@ -94,50 +156,14 @@ export async function getProjectFigmaCred(projectId: string): Promise<FigmaCred 
   return cred;
 }
 
-/** ========= Images API (ENV-based; Backward-compatible) ========= */
-export async function figmaGetImages(
-  fileKey: string,
-  nodeIdsRaw: string[]
-): Promise<Record<string, string>> {
-  const nodeIds = nodeIdsRaw.map(normalizeNodeId);
-  const q = `/images/${fileKey}?ids=${encodeURIComponent(
-    nodeIds.join(",")
-  )}&format=${EXPORT_FORMAT}&scale=${EXPORT_SCALE}`;
-
-  console.log("[FIGMA] GET images (ENV)", {
-    fileKey,
-    ids: nodeIds.join(","),
-    format: EXPORT_FORMAT,
-    scale: EXPORT_SCALE,
-    token: mask(FIGMA_TOKEN),
-  });
-
-  const json = await figmaFetch<{ images?: Record<string, string | null> }>(q, FIGMA_TOKEN);
-  const images = json?.images || {};
-
-  const keys = Object.keys(images);
-  console.log("[FIGMA] images resp (ENV)", {
-    idsCount: keys.length,
-    firstPair: keys.length ? { id: keys[0], url: images[keys[0]] } : null,
-  });
-
-  return Object.fromEntries(Object.entries(images).map(([k, v]) => [k, v ?? ""]));
-}
-
-/** Helper (ENV): single node image URL */
-export async function getFigmaNodePngUrl(nodeIdRaw: string): Promise<string | null> {
-  const id = normalizeNodeId(nodeIdRaw);
-  const map = await figmaGetImages(FIGMA_FILE_KEY, [id]);
-  return map[id] || null;
-}
-
 /** ========= Images API (Per-Project cred) ========= */
 export async function figmaGetImagesByCred(
   cred: FigmaCred,
   nodeIdsRaw: string[]
 ): Promise<Record<string, string>> {
+  noStore();
   const { token, fileKey, format = "png", scale = 2 } = cred;
-  const nodeIds = nodeIdsRaw.map(normalizeNodeId);
+  const nodeIds = nodeIdsRaw.map((r) => parseNodeIdFromInput(r)); // ✅ แข็งแรงขึ้น
   const q = `/images/${fileKey}?ids=${encodeURIComponent(
     nodeIds.join(",")
   )}&format=${format}&scale=${scale}`;
@@ -152,34 +178,54 @@ export async function figmaGetImagesByCred(
 
   const json = await figmaFetch<{ images?: Record<string, string | null> }>(q, token);
   const images = json?.images || {};
-
-  const keys = Object.keys(images);
-  console.log("[FIGMA] images resp (DB cred)", {
-    idsCount: keys.length,
-    firstPair: keys.length ? { id: keys[0], url: images[keys[0]] } : null,
-  });
-
   return Object.fromEntries(Object.entries(images).map(([k, v]) => [k, v ?? ""]));
 }
 
-/** ========= Nodes/Document (ENV-based) ========= */
-export async function getFigmaNodeDocument(nodeIdRaw: string) {
+/** ========= High-level helpers (รับ projectId โดยตรง) ========= */
+
+/** ดึงภาพหลาย node โดยอ้างอิง cred จาก ProjectIntegration ของโปรเจกต์ */
+export async function figmaGetImagesForProject(
+  projectId: string,
+  nodeIdsRaw: string[]
+): Promise<Record<string, string>> {
+  const cred = await getProjectFigmaCred(projectId);
+  if (!cred) {
+    throw new Error(
+      "[FIGMA] Missing Figma credentials in ProjectIntegration (type=FIGMA, status=ACTIVE)."
+    );
+  }
+  return figmaGetImagesByCred(cred, nodeIdsRaw);
+}
+
+/** ดึงภาพ node เดียว (URL) โดยอ้างอิง cred โปรเจกต์ */
+export async function getFigmaNodeImageUrlForProject(
+  projectId: string,
+  nodeIdRaw: string
+): Promise<string | null> {
+  const map = await figmaGetImagesForProject(projectId, [nodeIdRaw]);
   const id = normalizeNodeId(nodeIdRaw);
-  const path = `/files/${FIGMA_FILE_KEY}/nodes?ids=${encodeURIComponent(id)}`;
-  const json = (await figmaFetch<{ nodes?: Record<string, { document?: any }> }>(
-    path,
-    FIGMA_TOKEN
-  ));
-  return json?.nodes?.[id]?.document;
+  return map[id] || null;
 }
 
 /** ========= Nodes/Document (Per-Project cred) ========= */
 export async function getFigmaNodeDocumentByCred(cred: FigmaCred, nodeIdRaw: string) {
+  noStore();
   const { token, fileKey } = cred;
-  const id = normalizeNodeId(nodeIdRaw);
+  const id = parseNodeIdFromInput(nodeIdRaw); // ✅ แข็งแรงขึ้น
   const path = `/files/${fileKey}/nodes?ids=${encodeURIComponent(id)}`;
   const json = await figmaFetch<{ nodes?: Record<string, { document?: any }> }>(path, token);
   return json?.nodes?.[id]?.document;
+}
+
+/** อ่านโหนดจากโปรเจกต์ (สะดวก: ส่ง projectId + nodeId) */
+export async function getFigmaNodeDocumentForProject(projectId: string, nodeIdRaw: string) {
+  const cred = await getProjectFigmaCred(projectId);
+  if (!cred) {
+    throw new Error(
+      "[FIGMA] Missing Figma credentials in ProjectIntegration (type=FIGMA, status=ACTIVE)."
+    );
+  }
+  return getFigmaNodeDocumentByCred(cred, nodeIdRaw);
 }
 
 /** ========= Text & Keywords ========= */

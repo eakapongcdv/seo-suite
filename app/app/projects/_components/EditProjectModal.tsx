@@ -8,8 +8,6 @@ type ProjectLite = {
   siteUrl: string | null;
   targetLocale: string;
   includeBaidu: boolean;
-  figmaFileKey?: string | null;
-  figmaAccessToken?: string | null;
 };
 
 export default function EditProjectModal({ p }: { p: ProjectLite }) {
@@ -58,28 +56,6 @@ export default function EditProjectModal({ p }: { p: ProjectLite }) {
               <input
                 name="siteUrl"
                 defaultValue={p.siteUrl ?? ""}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          {/* NEW: Figma config per project */}
-          <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">Figma File Key</label>
-              <input
-                name="figmaFileKey"
-                defaultValue={p.figmaFileKey ?? ""}
-                placeholder="e.g. Y7POXMSBlGhvED21y8cB3q"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">Figma Personal Access Token</label>
-              <input
-                name="figmaAccessToken"
-                defaultValue={p.figmaAccessToken ?? ""}
-                placeholder="figd_***"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
               />
             </div>

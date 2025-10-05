@@ -36,15 +36,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     siteUrl,
     targetLocale,
     includeBaidu,
-    figmaFileKey,
-    figmaAccessToken,
   } = body as {
     siteName?: string;
     siteUrl?: string;
     targetLocale?: string;
     includeBaidu?: boolean;
-    figmaFileKey?: string | null;
-    figmaAccessToken?: string | null;
   };
 
   // ตรวจว่าเป็นของเจ้าของจริง
@@ -61,10 +57,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
         siteName: siteName ?? undefined,
         siteUrl: siteUrl ?? undefined,
         targetLocale: targetLocale ?? undefined,
-        includeBaidu: includeBaidu ?? undefined,
-        figmaFileKey: figmaFileKey === undefined ? undefined : figmaFileKey,
-        figmaAccessToken:
-          figmaAccessToken === undefined ? undefined : figmaAccessToken,
+        includeBaidu: includeBaidu ?? undefined
       },
       select: { id: true },
     });
