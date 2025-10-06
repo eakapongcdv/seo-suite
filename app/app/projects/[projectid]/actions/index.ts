@@ -1,3 +1,4 @@
+//app/app/projects/[projectid]/actions/index.ts
 export { createPageAction } from "./createPage";
 export { updatePageAction } from "./updatePage";
 export { deletePageAction } from "./deletePage";
@@ -7,3 +8,4 @@ export { refreshLighthouseAction } from "./lighthouse";
 export { scrapeRealPageAction } from "./scrape";
 export { aiSeoInsightAction } from "./aiSeoInsight";
 export * from "./topKeywords"; 
+export { checkGoogleRankAction } from "./checkRank"; 

@@ -11,7 +11,7 @@ import {
   disconnectIntegration,
   triggerSyncIntegration,
   IntegrationTypeLiteral,
-  testRankApiGoogle,
+  testRankApiGoogleFormAction,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -382,7 +382,7 @@ export default async function IntegrationsPage({ params }: { params: Params }) {
             </a>
 
             {/* ห้ามใส่ method/encType กับ server action form */}
-            <form action={testRankApiGoogle}>
+            <form action={testRankApiGoogleFormAction}>
               <input type="hidden" name="projectId" value={projectid} />
               <input type="hidden" name="type" value="RANK_API" />
               <button

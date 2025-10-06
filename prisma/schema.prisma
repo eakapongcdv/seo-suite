@@ -82,64 +82,64 @@ model Page {
   pageName               String
   pageUrl                String
   pageDescriptionSummary String?
-  pageContentKeywords    String[] @default([]) // Extracted content keywords
+  pageContentKeywords    String[] @default([])
   pageMetaDescription    String?
   pageSeoKeywords        String[] @default([])
 
-  // --- Ordering ---
   sortNumber Int @default(0)
 
-  // --- Figma Sync fields ---
+  // Figma
   figmaNodeId      String?
-  figmaCaptureUrl  String? // Temporary URL from Figma /images
+  figmaCaptureUrl  String?
   figmaCapturedAt  DateTime?
   figmaTextContent String?   @db.Text
 
-  // --- Live page capture (NEW) ---
+  // Live capture
   realCaptureUrl String?
 
-  // --- Lighthouse (optional aggregates) ---
+  // Lighthouse
   lighthousePerf          Int?
   lighthouseSeo           Int?
   lighthouseAccessibility Int?
 
   aiSeoInsight String? @db.Text
 
-  // ====== Top keyword cache (Google Ads) ======
-  topKeywordVolumesJson String?   @db.Text // เก็บ JSON ของ [{keyword, avgMonthlySearches}]
+  // ✅ ใช้ Json แทน Text
+  topKeywordVolumesJson Json?
   topKeywordFetchedAt   DateTime?
 
-  // --- On-page SEO checklist ---
+  // On-page
   seoTitlePresent             Boolean @default(false)
-  seoTitleLengthOk            Boolean @default(false) // e.g., 30–60 chars
+  seoTitleLengthOk            Boolean @default(false)
   seoH1Present                Boolean @default(false)
   seoCanonicalPresent         Boolean @default(false)
   seoCanonicalSelfReferential Boolean @default(false)
-  seoRobotsNoindex            Boolean @default(false) // true means blocked from index
+  seoRobotsNoindex            Boolean @default(false)
   seoSitemapIncluded          Boolean @default(false)
   seoStructuredDataPresent    Boolean @default(false)
   seoHreflangValid            Boolean @default(false)
   seoMobileFriendly           Boolean @default(false)
 
   seoWordCount          Int?
-  seoAltTextCoveragePct Int? // 0–100
+  // ✅ ถ้าต้องการความแม่น แปลงเป็น Decimal ได้
+  seoAltTextCoveragePct Float?
   seoInternalLinks      Int?
   seoExternalLinks      Int?
 
-  // --- Core Web Vitals (field data if available) ---
+  // CWV (แนะนำ)
   cwvLcpMs Int?
-  cwvCls   Float?
+  cwvCls   Decimal? @db.Decimal(6, 4) // 0.0000 – 9.9999
   cwvInpMs Int?
 
-  // --- Indexing / GSC (synced) ---
+  // GSC
   indexStatus    IndexStatus?
   lastCrawledAt  DateTime?
   gscImpressions Int?
   gscClicks      Int?
-  gscCtrPct      Float?
-  gscAvgPosition Float?
+  gscCtrPct      Decimal?     @db.Decimal(5, 2) // 0–100.00
+  gscAvgPosition Decimal?     @db.Decimal(5, 2)
 
-  // --- Rank tracking snapshot (optional mirror) ---
+  // Rank snapshot
   lastRankPosition  Int?
   lastRankCheckedAt DateTime?
 
@@ -147,12 +147,14 @@ model Page {
   updatedAt DateTime @updatedAt
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  // Backref to keywords that target this page
   rankTargets RankKeyword[]
-  // @@unique([projectId, pageUrl]) // enable if you want to prevent duplicates per project
 
+  // ✅ เปิด unique กันซ้ำในโปรเจกต์
+  @@unique([projectId, pageUrl])
   @@index([projectId])
   @@index([projectId, sortNumber])
+  @@index([projectId, pageName])
+  @@index([projectId, updatedAt])
 }
 
 //
@@ -161,6 +163,10 @@ enum IntegrationType {
   GSC // Google Search Console
   RANK_API // SerpAPI / DataForSEO / etc.
   FIGMA // Store per-project Figma token/fileKey/config
+  GOOGLE_ADS
+  GA4
+  LIGHTHOUSE
+  CRUX
 }
 
 enum IntegrationStatus {
@@ -206,8 +212,8 @@ model RankKeyword {
   projectId    String
   pageId       String?
   keyword      String
-  locale       String // e.g., "en-US"
-  countryCode  String? // e.g., "US", "TH"
+  locale       String
+  countryCode  String?
   city         String?
   searchEngine SearchEngine @default(google)
   device       DeviceType   @default(mobile)
@@ -223,8 +229,12 @@ model RankKeyword {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ✅ กัน keyword ซ้ำในบริบทเดียวกัน
+  @@unique([projectId, keyword, locale, searchEngine, device])
   @@index([projectId, keyword])
   @@index([pageId])
+  @@index([projectId, active, lastCheckedAt])
+  @@index([projectId, locale, searchEngine, device])
 }
 
 model RankSnapshot {

@@ -442,3 +442,7 @@ export async function testRankApiGoogle(formData: FormData) {
     return { ok: false, error: msg };
   }
 }
+
+export async function testRankApiGoogleFormAction(formData: FormData): Promise<void> {
+  await testRankApiGoogle(formData);
+}
