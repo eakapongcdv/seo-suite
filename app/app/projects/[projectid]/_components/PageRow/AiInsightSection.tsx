@@ -1,3 +1,4 @@
+// app/app/projects/[projectid]/_components/PageRow/AiInsightSection.tsx
 "use client";
 
 import SubmitButton from "@/app/components/SubmitButton";
@@ -21,13 +22,15 @@ export default function AiInsightSection({ projectId, projectTargetLocale, page 
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm font-semibold text-gray-900">
-          AI SEO Insight <span className="ml-1 text-xs text-gray-500">({label} → ภาษาไทย)</span>
+          AI SEO Insight <span className="ml-1 text-xs text-gray-500">({label})</span>
         </div>
         <form action={aiSeoInsightAction}>
           <input type="hidden" name="pageId" value={page.id} />
           <input type="hidden" name="projectId" value={projectId} />
+          {/* ภาษา keywords สำหรับการวิเคราะห์ */}
           <input type="hidden" name="preferredKeywordsLanguage" value={kLang} />
-          <input type="hidden" name="preferredOutputLanguage" value="th" />
+          {/* ภาษาเอาต์พุต/ตัวอย่าง/คำแนะนำ = ตาม targetLocale */}
+          <input type="hidden" name="preferredOutputLanguage" value={kLang} />
           <SubmitButton
             aria-label="Re-run analysis"
             title="Re-run analysis"
@@ -42,7 +45,9 @@ export default function AiInsightSection({ projectId, projectTargetLocale, page 
       {page.aiSeoInsight ? (
         <MarkdownProse markdown={page.aiSeoInsight} />
       ) : (
-        <p className="text-sm text-gray-500">ยังไม่มี Insight — กด “วิเคราะห์ใหม่” เพื่อให้ AI สรุปคำแนะนำ</p>
+        <p className="text-sm text-gray-500">
+          ยังไม่มี Insight — กด “วิเคราะห์ใหม่” (ผลลัพธ์จะเป็นภาษาตามเป้าหมายของโปรเจกต์)
+        </p>
       )}
     </div>
   );
