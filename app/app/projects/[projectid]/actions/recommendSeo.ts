@@ -33,8 +33,18 @@ function uniqueNonEmpty(arr: string[], limit: number) {
   return Array.from(new Set(arr.map((s) => s.trim()).filter(Boolean))).slice(0, limit);
 }
 
-function ensureLongTail(kws: string[], minWords = 3) {
-  return kws.filter((k) => k.split(/\s+/).filter(Boolean).length >= minWords);
+// ✅ ใช้ช่วงคำ 3–4 คำเท่านั้น
+function ensureLongTailRange(kws: string[], minWords = 3, maxWords = 4) {
+  return kws.filter((k) => {
+    const wc = k.trim().split(/\s+/).filter(Boolean).length;
+    return wc >= minWords && wc <= maxWords;
+  });
+}
+
+// ✅ บีบให้วลีไม่เกิน N คำ (เช่น 4)
+function clampToMaxWords(s: string, maxWords = 4) {
+  const parts = s.trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, maxWords).join(" ");
 }
 
 export async function recommendSeoKeywordsAction(formData: FormData): Promise<
@@ -80,8 +90,8 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
 
     const baseText = (page.figmaTextContent || "").slice(0, 6000);
     const seeds = uniqueNonEmpty([...(page.pageSeoKeywords ?? []), ...(page.pageContentKeywords ?? [])], 50);
-    const baseTitle = page.pageName || ""; // เดิมเคย fallback ที่ scrapedTitle/H1
-    const baseSummary = page.pageDescriptionSummary || ""; // เดิมเคย fallback scrapedDescription
+    const baseTitle = page.pageName || "";
+    const baseSummary = page.pageDescriptionSummary || "";
 
     const noContext = !baseText && seeds.length === 0 && !baseTitle && !baseSummary;
 
@@ -97,7 +107,7 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
           "Rules:",
           "- Output language must be exactly the requested output language.",
           "- Keywords language must match the requested keywords language.",
-          "- Long-tail keywords must each have at least 3 words and reflect searcher intent.",
+          "- Long-tail keywords must each have at least 3 words AND at most 4 words (3–4 words).",
           "- No extra commentary. JSON only.",
         ].join("\n");
 
@@ -127,7 +137,17 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
         const raw = res.choices?.[0]?.message?.content?.trim() || "{}";
         const parsed = JSON.parse(raw);
         const safe = OutSchema.safeParse(parsed);
-        if (safe.success) out = safe.data;
+        if (safe.success) {
+          // บีบคำและคัดกรองช่วง 3–4 คำ เผื่อโมเดลยาวเกิน
+          out = {
+            ...safe.data,
+            longTailKeywords: ensureLongTailRange(
+              (safe.data.longTailKeywords || []).map((k) => clampToMaxWords(k, 4)),
+              3,
+              4
+            ),
+          } as OkPayload;
+        }
       } catch {
         // ใช้ fallback ด้านล่าง
       }
@@ -164,8 +184,11 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
       if (pageMetaDescription.length > 170) pageMetaDescription = trimAtWord(pageMetaDescription, 170);
 
       const mined = extractKeywordsSimple(baseText || "", 12);
-      let kws = uniqueNonEmpty([...seeds.slice(0, 8), ...mined], 30);
-      kws = ensureLongTail(kws, 3);
+      // บีบวลีไม่เกิน 4 คำ + กรองให้เหลือ 3–4 คำ
+      let kws = uniqueNonEmpty([...seeds.slice(0, 8), ...mined], 60)
+        .map((k) => clampToMaxWords(k, 4));
+      kws = ensureLongTailRange(kws, 3, 4);
+
       if (kws.length === 0 && primary) {
         const mods =
           preferredOutputLanguage === "th"
@@ -173,7 +196,14 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
             : preferredOutputLanguage === "zh"
             ? ["是什么", "价格", "优点", "对比", "怎么用", "测评", "新手入门"]
             : ["what is", "price", "benefits", "comparison", "how to use", "review", "for beginners"];
-        kws = mods.map((m) => `${primary} ${m}`).filter((s) => s.split(/\s+/).length >= 3).slice(0, 12);
+
+        kws = mods
+          .map((m) => clampToMaxWords(`${primary} ${m}`, 4))
+          .filter((s) => {
+            const wc = s.split(/\s+/).filter(Boolean).length;
+            return wc >= 3 && wc <= 4;
+          })
+          .slice(0, 12);
       }
 
       out = {
@@ -189,7 +219,8 @@ export async function recommendSeoKeywordsAction(formData: FormData): Promise<
       recommendedTitle: trimAtWord(out.recommendedTitle || "", 70, ""),
       pageDescriptionSummary: trimAtWord(out.pageDescriptionSummary || "", 400, ""),
       pageMetaDescription: trimAtWord(out.pageMetaDescription || "", 170, ""),
-      longTailKeywords: uniqueNonEmpty(ensureLongTail(out.longTailKeywords || [], 3), 30),
+      // สุดท้ายคุมช่วง 3–4 คำ + unique + จำกัด 30 รายการ
+      longTailKeywords: uniqueNonEmpty(ensureLongTailRange(out.longTailKeywords || [], 3, 4), 30),
     });
 
     return { ok: true, data: clean };

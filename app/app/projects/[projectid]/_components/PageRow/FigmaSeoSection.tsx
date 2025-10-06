@@ -72,12 +72,6 @@ export default function FigmaSeoSection({ projectId, page, keywordLang }: Props)
     }
   }
 
-  // helper: submit ฟอร์มย่อยทันที (กัน default)
-  const submitNow = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    (e.currentTarget as HTMLFormElement).submit();
-  };
-
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-12">
@@ -148,7 +142,7 @@ export default function FigmaSeoSection({ projectId, page, keywordLang }: Props)
 
           {/* 1) Recommended Title -> pageName */}
           {recTitle && (
-            <form action={updatePageAction} onSubmit={submitNow} className="grid grid-cols-1 gap-2">
+            <form action={updatePageAction} className="grid grid-cols-1 gap-2">
               <input type="hidden" name="id" value={page.id} />
               <input type="hidden" name="projectId" value={projectId} />
               <label className="text-xs font-medium text-gray-700">Recommended Title</label>
@@ -168,7 +162,7 @@ export default function FigmaSeoSection({ projectId, page, keywordLang }: Props)
 
           {/* 2) Summary + 3) Meta Description */}
           {(recSummary || recMetaDesc) && (
-            <form action={updatePageAction} onSubmit={submitNow} className="grid grid-cols-1 gap-2">
+            <form action={updatePageAction} className="grid grid-cols-1 gap-2">
               <input type="hidden" name="id" value={page.id} />
               <input type="hidden" name="projectId" value={projectId} />
               {recSummary && (
@@ -209,7 +203,7 @@ export default function FigmaSeoSection({ projectId, page, keywordLang }: Props)
 
           {/* 4) Long-tail Keywords */}
           {recKeywords.length > 0 && (
-            <form action={updatePageAction} onSubmit={submitNow} className="grid grid-cols-1 gap-2">
+            <form action={updatePageAction} className="grid grid-cols-1 gap-2">
               <input type="hidden" name="id" value={page.id} />
               <input type="hidden" name="projectId" value={projectId} />
               <label className="text-xs font-medium text-gray-700">

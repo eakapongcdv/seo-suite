@@ -26,10 +26,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             {/* Brand */}
             <Link href="/app/projects" className="flex items-center gap-3">
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white font-semibold shadow-sm">
-                SS
+                SEO
               </div>
               <div className="text-[17px] font-semibold tracking-tight text-gray-900">
-                SEO Suite
+                CODEDIVA SEO Suite
               </div>
             </Link>
 
@@ -78,7 +78,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       {/* Footer (full-width + stick to bottom) */}
       <footer className="w-full border-t border-gray-200 bg-white">
         <div className="w-full px-4 sm:px-6 py-4 text-center text-sm text-gray-500">
-          © {year} SEO Suite · All rights reserved
+          © {year} CODEDIVA SEO Suite · All rights reserved
         </div>
       </footer>
     </div>
