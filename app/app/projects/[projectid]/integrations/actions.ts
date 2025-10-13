@@ -1,10 +1,9 @@
-// app/app/projects/[projectid]/integrations/actions.ts
 "use server";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
-import { getGoogleAdsClientForProject, fetchAvgMonthlySearches } from "@/lib/googleAds"; // ← เพิ่มบรรทัดนี้
+import { getGoogleAdsClientForProject, fetchAvgMonthlySearches } from "@/lib/googleAds";
 
 export type IntegrationTypeLiteral = "GSC" | "FIGMA" | "RANK_API";
 
@@ -93,7 +92,6 @@ export async function upsertRankApiIntegration(formData: FormData) {
   const vendor = String(formData.get("vendor") || "google").toLowerCase();
   const userId = await ensureOwner(projectId);
 
-  // เก็บสถานะ + config ก่อนอัปเสิร์ต เพื่อ debug
   const before = await prisma.projectIntegration.findUnique({
     where: { projectId_type: { projectId, type: "RANK_API" } },
     select: { status: true, propertyUri: true, config: true, errorMsg: true, connectedAt: true },
@@ -116,13 +114,15 @@ export async function upsertRankApiIntegration(formData: FormData) {
     });
 
     if (vendor === "google") {
-      // รับ field ของ Google Ads
       const developer_token = String(formData.get("developer_token") || "").trim();
       const client_id       = String(formData.get("client_id") || "").trim();
       const client_secret   = String(formData.get("client_secret") || "").trim();
       const refresh_token   = String(formData.get("refresh_token") || "").trim();
       const login_customer_id = String(formData.get("login_customer_id") || "").replace(/-/g, "").trim() || undefined;
       const customer_id       = String(formData.get("customer_id") || "").replace(/-/g, "").trim();
+      const keyword_planner_customer_id = String(formData.get("keyword_planner_customer_id") || "")
+        .replace(/-/g, "")
+        .trim() || undefined;
 
       propertyUri = String(formData.get("propertyUri") || "").trim() || null;
 
@@ -133,13 +133,13 @@ export async function upsertRankApiIntegration(formData: FormData) {
         refresh_token,
         login_customer_id,
         customer_id,
+        keyword_planner_customer_id,
       };
 
       config.secret = secret;
 
       statusActive = !!(developer_token && client_id && client_secret && refresh_token && customer_id);
 
-      // DEBUG (mask ค่าลับ)
       console.log("[RANK_API][UPSERT] google secret (masked)", {
         has_dev_token: !!developer_token,
         developer_token: mask(developer_token),
@@ -148,6 +148,7 @@ export async function upsertRankApiIntegration(formData: FormData) {
         refresh_token: mask(refresh_token),
         login_customer_id: login_customer_id || "(none)",
         customer_id_len: customer_id ? customer_id.length : 0,
+        has_kp_cid: !!keyword_planner_customer_id,
         propertyUri,
         willBeActive: statusActive,
       });
@@ -157,7 +158,6 @@ export async function upsertRankApiIntegration(formData: FormData) {
           "Missing Google Ads credentials. Required: developer_token, client_id, client_secret, refresh_token, customer_id";
       }
     } else {
-      // generic vendors (bing/baidu ฯลฯ)
       const secret = String(formData.get("secret") || "").trim();
       propertyUri = String(formData.get("propertyUri") || "").trim() || null;
       config.secret = secret;
@@ -175,7 +175,6 @@ export async function upsertRankApiIntegration(formData: FormData) {
       }
     }
 
-    // upsert
     const saved = await prisma.projectIntegration.upsert({
       where: { projectId_type: { projectId, type: "RANK_API" } },
       create: {
@@ -206,7 +205,6 @@ export async function upsertRankApiIntegration(formData: FormData) {
     const msg = err?.message || String(err);
     console.error("[RANK_API][UPSERT] ERROR:", msg);
 
-    // บันทึก errorMsg เพื่อแสดงใน UI
     try {
       await prisma.projectIntegration.upsert({
         where: { projectId_type: { projectId, type: "RANK_API" } },
@@ -230,7 +228,7 @@ export async function upsertRankApiIntegration(formData: FormData) {
     }
 
     revalidatePath(`/app/projects/${projectId}/integrations`);
-    throw err; // ให้ action ส่ง error ต่อไป (จะเห็นใน dev console)
+    throw err;
   }
 }
 
@@ -284,16 +282,7 @@ function jsonSafe(v: any, max = 2000) {
   }
 }
 
-/** ดึงข้อความ error ที่พบบ่อยจาก google-ads-api และ Google APIs */
 function extractGoogleAdsError(err: any): string {
-  // 1) ตัวข้อความหลักถ้ามี
-  if (err?.message && typeof err.message === "string") {
-    // บางเคส message เป็น "Request contains an invalid argument."
-    // แต่รายละเอียดจริงอยู่ใน details/errors ด้านล่าง เราจะต่อรวมด้วย
-  }
-
-  // 2) google-ads-api (gRPC-style)
-  //    โครงสร้างพบบ่อย: { code, details: [{ errors: [{ message, error_code: {...}, location: {...} }], request_id }] }
   const details = Array.isArray(err?.details) ? err.details : undefined;
   const firstErrors = Array.isArray(details?.[0]?.errors) ? details[0].errors : undefined;
   const firstError = firstErrors?.[0];
@@ -306,7 +295,6 @@ function extractGoogleAdsError(err: any): string {
   if (firstError?.message) parts.push(`detail=${firstError.message}`);
   const ec = firstError?.error_code;
   if (ec && typeof ec === "object") {
-    // หาคีย์ที่เป็น truthy ภายใน error_code เช่น authorization_error, authentication_error, quota_error
     const keys = Object.keys(ec).filter((k) => ec[k]);
     if (keys.length) parts.push(`error_code=${keys.map((k) => `${k}:${ec[k]}`).join(",")}`);
   }
@@ -318,30 +306,24 @@ function extractGoogleAdsError(err: any): string {
     if (path) parts.push(`field=${path}`);
   }
 
-  // 3) รูปแบบ Google Auth / Axios-ish: err.response.data, err.error, err.errors[]
   if (err?.response?.data) {
     const d = err.response.data;
-    // พบบ่อย: { error: { code, message, status, details: [...] } }
     const e2 = d.error || d;
     if (e2?.message && typeof e2.message === "string") parts.push(`resp=${e2.message}`);
     else parts.push(`resp=${jsonSafe(e2, 400)}`);
   } else if (err?.error) {
-    // บางลิบอารีคืน {error:{…}}
     if (typeof err.error === "string") parts.push(`error=${err.error}`);
     else parts.push(`error=${jsonSafe(err.error, 400)}`);
   }
 
-  // 4) ตกหล่นหมด ก็ stringify ทั้งก้อน (ตัดยาว)
   if (parts.length === 0) {
     return jsonSafe(err, 600);
   }
   return parts.join(" | ");
 }
 
-// ===== helper: แปลง error ของ Google Ads ให้อ่านง่าย =====
 function prettyGoogleAdsError(err: any): string {
   try {
-    // แพ็กเกจ google-ads-api มักคืน err.meta.body หรือ err.errors
     const body = err?.meta?.body || err;
     if (typeof body === "string") return body;
     if (body?.errors && Array.isArray(body.errors)) {
@@ -354,18 +336,49 @@ function prettyGoogleAdsError(err: any): string {
   }
 }
 
-/** ========== ทดสอบ credential แบบไม่ throw ========== */
-// - ถ้าสำเร็จ: เคลียร์ errorMsg (null) และอัพเดต lastSyncAt เพื่อให้ UI เห็นว่าเพิ่งทดสอบผ่าน
-// - ถ้าล้มเหลว: เซฟ errorMsg (แสดงบน UI) แล้ว revalidate; **ไม่ throw**
+/** ========== ทดสอบ credential แบบไม่ throw + DEBUG ครบถ้วน ========== */
 export async function testRankApiGoogle(formData: FormData) {
   const projectId = String(formData.get("projectId") || "");
   await ensureOwner(projectId);
 
-  try {
-    // 1) ดึง client + ตรวจฐาน
-    const { customer } = await (await import("@/lib/googleAds")).getGoogleAdsClientForProject(projectId);
+  const kwSample = ["ไอโฟน"]; // หรือ "iphone 17 pro max"
+  const kwOptions = {
+    language_code: "th",
+    geo_target_constants: ["geoTargetConstants/2764"], // Thailand
+  } as const;
 
-    // 2) ping ลูกค้า (ยืนยันสิทธิ์ + CID ใช้ได้)
+  const startedAt = new Date();
+  console.groupCollapsed(`[RANK_API][TEST][${projectId}] start ${startedAt.toISOString()}`);
+  try {
+    console.log("[RANK_API][TEST] getGoogleAdsClientForProject…");
+    const { customer, client, customerId, loginCustomerId } =
+      await (await import("@/lib/googleAds")).getGoogleAdsClientForProject(projectId);
+
+    // ✅ list accounts the current token can access
+    const { listAccessibleCustomers } = await import("@/lib/googleAds");
+    const accessible = await listAccessibleCustomers(client);
+
+    // อ่าน secret เพื่อหา kp CID ที่จะใช้จริง (ถ้ามี)
+    const integ = await prisma.projectIntegration.findFirst({
+      where: { projectId, type: "RANK_API", status: "ACTIVE" },
+      select: { config: true },
+    });
+    const cfg = (integ?.config ?? {}) as any;
+    const secret =
+      typeof cfg?.secret === "string" ? JSON.parse(cfg.secret) : cfg?.secret || {};
+    const kpCid = String(secret?.keyword_planner_customer_id || secret?.customer_id || "")
+      .replace(/-/g, "")
+      .trim();
+
+    console.log("[KWIDEA][ACCESS]", {
+      login_mcc: loginCustomerId || "(none)",
+      base_cid: customerId,
+      kp_cid: kpCid || "(auto/unknown)",
+      kp_in_accessible: kpCid ? accessible.includes(kpCid) : "(no-kpCid)",
+      accessible_count: accessible.length,
+    });
+
+    console.log("[RANK_API][TEST] GAQL: SELECT customer.id… LIMIT 1");
     const rows = await customer.query(`
       SELECT
         customer.resource_name,
@@ -375,36 +388,57 @@ export async function testRankApiGoogle(formData: FormData) {
       LIMIT 1
     `);
 
-    // 3) ลองขอไอเดีย (ตัวอย่าง: iphone 17 pro max)
-    //    ถ้า developer token ถูกจำกัด test-only ก็จะ error (เช่น DEVELOPER_TOKEN_NOT_APPROVED)
+    const row0 = rows?.[0]?.customer;
+    console.log("[RANK_API][TEST] customer peek", {
+      resource_name: row0?.resource_name,
+      id: row0?.id ? String(row0.id) : null,
+      name: row0?.descriptive_name ?? null,
+      rows_count: Array.isArray(rows) ? rows.length : 0,
+    });
+
+    console.log("[RANK_API][TEST] Keyword Ideas request preview", {
+      keywords: kwSample,
+      options: kwOptions,
+    });
+
     try {
       const { fetchAvgMonthlySearches } = await import("@/lib/googleAds");
-      await fetchAvgMonthlySearches(projectId, ["iphone 17 pro max"], {
-        language_code: "th",
-        // Thailand
-        geo_target_constants: ["geoTargetConstants/2392"],
-      });
+      await fetchAvgMonthlySearches(projectId, kwSample, kwOptions);
+      console.log("[RANK_API][TEST] Keyword Ideas OK (developer token มีสิทธิ์ใช้)");
     } catch (inner) {
-      // ถ้า Keyword Ideas ใช้ไม่ได้ (เช่น developer token ไม่ approved) ก็ถือว่ายังเชื่อมได้
-      // แต่แจ้งใน errorMsg เพื่อให้ user รู้ว่าต้องขอสิทธิ์เพิ่ม
-      const msg = prettyGoogleAdsError(inner);
+      const msgPretty = prettyGoogleAdsError(inner);
+      const msgSlim = extractGoogleAdsError(inner);
+
+      console.warn("[RANK_API][TEST] Keyword Ideas RESTRICTED", {
+        msgPretty,
+        msgSlim,
+        name: inner?.name,
+        code: inner?.code,
+        status: inner?.status,
+        request_id:
+          inner?.meta?.request_id ||
+          inner?.response?.data?.request_id ||
+          inner?.request_id ||
+          null,
+      });
+
       await prisma.projectIntegration.update({
         where: { projectId_type: { projectId, type: "RANK_API" } },
         data: {
-          // เชื่อมต่อ credential ผ่าน (ไม่ error credentials) แต่ฟีเจอร์ keyword planner อาจถูกจำกัด
           status: "ACTIVE",
           errorMsg:
             "Connected, but Keyword Planner is restricted: " +
-            msg +
+            msgPretty +
             " — Apply for Basic/Standard access for developer token if needed.",
           lastSyncAt: new Date(),
         },
       });
+
+      console.groupEnd();
       revalidatePath(`/app/projects/${projectId}/integrations`);
       return { ok: true, note: "Connected but keyword planner restricted" };
     }
 
-    // 4)เคลียร์ errorMsg ถ้าทุกอย่างผ่าน
     await prisma.projectIntegration.update({
       where: { projectId_type: { projectId, type: "RANK_API" } },
       data: {
@@ -414,12 +448,30 @@ export async function testRankApiGoogle(formData: FormData) {
       },
     });
 
+    console.log("[RANK_API][TEST] DONE OK]");
+    console.groupEnd();
     revalidatePath(`/app/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (err) {
-    const msg = prettyGoogleAdsError(err);
+    const finishedAt = new Date();
+    const msgPretty = prettyGoogleAdsError(err);
+    const msgSlim = extractGoogleAdsError(err);
 
-    // ✅ ไม่ throw — บันทึก errorMsg ให้ UI แสดง
+    console.error("[RANK_API][TEST] FAILED", {
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      msgPretty,
+      msgSlim,
+      name: err?.name,
+      code: err?.code,
+      status: err?.status,
+      request_id:
+        err?.meta?.request_id ||
+        err?.response?.data?.request_id ||
+        err?.request_id ||
+        null,
+      stack: err?.stack,
+    });
+
     await prisma.projectIntegration.upsert({
       where: { projectId_type: { projectId, type: "RANK_API" } },
       create: {
@@ -430,16 +482,17 @@ export async function testRankApiGoogle(formData: FormData) {
         connectedBy: await ensureOwner(projectId),
         propertyUri: null,
         config: {},
-        errorMsg: msg,
+        errorMsg: msgPretty,
       },
       update: {
         status: "INACTIVE",
-        errorMsg: msg,
+        errorMsg: msgPretty,
       },
     });
 
+    console.groupEnd();
     revalidatePath(`/app/projects/${projectId}/integrations`);
-    return { ok: false, error: msg };
+    return { ok: false, error: msgPretty };
   }
 }
 

@@ -78,7 +78,7 @@ export async function refreshTopKeywordVolumesAction(formData: FormData): Promis
   try {
     const volumes = await fetchAvgMonthlySearches(projectId, keywords, {
       language_code: lang,
-      // geo_target_constants: ["geoTargetConstants/2392"],
+      // geo_target_constants: ["geoTargetConstants/2764"],
     });
 
     const top3 = normalizeVolumes(volumes).slice(0, 3);

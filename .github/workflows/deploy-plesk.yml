@@ -1,0 +1,259 @@
+name: Deploy to Plesk via SSH + PM2
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      # ===== Define once =====
+      DOMAIN: codediva.co.th
+      SUB_DOMAIN: seo.codediva.co.th
+      PORT: "4102"
+      # =======================
+
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      ACTOR: ${{ github.actor }}
+      REF_NAME: ${{ github.ref_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+
+      # DingTalk (align with working test pipeline)
+      DINGTALK_TOKEN: ${{ secrets.DINGTALK_ACCESS_TOKEN }}
+      DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+
+      # Optional deploy URL (either Vars or Secrets)
+      DEPLOY_URL_VAR: ${{ vars.DEPLOY_URL }}
+      DEPLOY_URL_SECRET: ${{ secrets.DEPLOY_URL }}
+
+      # Speed up npm
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+      CI: "true"
+
+    steps:
+      - name: Checkout (shallow)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js + npm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Prepare SSH key & known_hosts (robust)
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY_B64: ${{ secrets.SSH_PRIVATE_KEY_B64 }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ~/.ssh
+
+          if [[ -n "${SSH_PRIVATE_KEY_B64:-}" ]]; then
+            echo "$SSH_PRIVATE_KEY_B64" | base64 -d > ~/.ssh/id_rsa
+          elif [[ -n "${SSH_PRIVATE_KEY:-}" ]]; then
+            printf "%s" "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+            tr -d '\r' < ~/.ssh/id_rsa > ~/.ssh/id_rsa.clean && mv ~/.ssh/id_rsa.clean ~/.ssh/id_rsa
+          else
+            echo "No SSH key provided (SSH_PRIVATE_KEY_B64 or SSH_PRIVATE_KEY)"; exit 1
+          fi
+
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1 || { echo "Invalid SSH private key"; exit 1; }
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Rsync sources → server
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          TARGET_DIR="/var/www/vhosts/$DOMAIN/$SUB_DOMAIN"
+          rsync -az --delete --no-perms --no-times \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude "node_modules/" \
+            --exclude ".next/" \
+            --exclude "dist/" \
+            --exclude ".env*" \
+            --exclude "tmp/" \
+            --exclude "sites/" \
+            -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
+            ./ "$SSH_USER@$SSH_HOST:$TARGET_DIR/"
+
+      - name: Build & restart with PM2 (on server)
+        id: deploy_pm2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ env.SSH_HOST }}
+          username: ${{ env.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}   # plaintext OpenSSH key (not base64)
+          port: 22
+          script_stop: true
+          timeout: 2m
+          command_timeout: 15m
+          envs: DOMAIN,SUB_DOMAIN,PORT
+          script: |
+            set -Eeuo pipefail
+
+            PROJ_DIR="/var/www/vhosts/${DOMAIN}/${SUB_DOMAIN}"
+            echo "cd $PROJ_DIR"
+            cd "$PROJ_DIR"
+
+            echo "npm ci (prod only, ignore lifecycle scripts & disable husky)"
+            export HUSKY=0
+            npm ci --omit=dev --ignore-scripts
+
+            # Rebuild native deps if any (no scripts)
+            npm rebuild --no-fund --no-audit || true
+
+            echo "npm run build"
+            npm run build
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+              npm i -g pm2
+            fi
+
+            # Write ecosystem.config.cjs safely (no heredoc)
+            : > ecosystem.config.cjs
+            printf '%s\n' 'module.exports = {' >> ecosystem.config.cjs
+            printf '%s\n' '  apps: [{' >> ecosystem.config.cjs
+            printf '%s\n' '    name: process.env.SUB_DOMAIN || "app",' >> ecosystem.config.cjs
+            printf '%s\n' '    script: "dist/server.js",' >> ecosystem.config.cjs
+            printf '%s\n' '    instances: 1,' >> ecosystem.config.cjs
+            printf '%s\n' '    exec_mode: "fork",' >> ecosystem.config.cjs
+            printf '%s\n' '    watch: false,' >> ecosystem.config.cjs
+            printf '%s\n' '    autorestart: true,' >> ecosystem.config.cjs
+            printf '%s\n' '    max_memory_restart: "512M",' >> ecosystem.config.cjs
+            printf '%s\n' '    env: {' >> ecosystem.config.cjs
+            printf '%s\n' '      NODE_ENV: "production",' >> ecosystem.config.cjs
+            printf '%s\n' '      PORT: process.env.PORT || "3000"' >> ecosystem.config.cjs
+            printf '%s\n' '    }' >> ecosystem.config.cjs
+            printf '%s\n' '  }]' >> ecosystem.config.cjs
+            printf '%s\n' '}' >> ecosystem.config.cjs
+
+            export NODE_ENV=production PORT="${PORT}" SUB_DOMAIN="${SUB_DOMAIN}"
+            pm2 startOrReload ecosystem.config.cjs --env production --update-env
+            pm2 save
+            pm2 status || true
+
+      # (A) แจ้งเตือนเมื่อสำเร็จเท่านั้น
+      - name: Notify DingTalk (post-deploy - SUCCESS)
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # เลือก URL สำหรับเปิดดูระบบหลัง deploy
+          DEPLOY_URL=""
+          if [[ -n "${DEPLOY_URL_VAR:-}" ]]; then
+            DEPLOY_URL="$DEPLOY_URL_VAR"
+          elif [[ -n "${DEPLOY_URL_SECRET:-}" ]]; then
+            DEPLOY_URL="$DEPLOY_URL_SECRET"
+          else
+            DEPLOY_URL="https://${SUB_DOMAIN}"
+          fi
+
+          TITLE="✅ ${REPO} – Deploy Success (main)"
+          SHORT_SHA=${SHA::7}
+          BODY="### ${TITLE}
+
+          **Repository:** ${REPO}
+          **Branch:** \`${REF_NAME}\`
+          **Triggered by:** \`${ACTOR}\`
+          **Commit:** \`${SHORT_SHA}\`
+
+          **Target:** \`${SUB_DOMAIN}\` (Domain: \`${DOMAIN}\`)
+          **PM2 Port:** \`${PORT}\`
+
+          **Run:** ${RUN_URL}
+          **Deployed URL:** ${DEPLOY_URL}
+          "
+
+          TITLE_JSON=$(printf '%s' "$TITLE" | jq -Rsa .)
+          BODY_JSON=$(printf '%s' "$BODY"  | jq -Rsa .)
+          PAYLOAD=$(printf '{"msgtype":"markdown","markdown":{"title":%s,"text":%s}}' "$TITLE_JSON" "$BODY_JSON")
+
+          build_webhook() {
+            local token="$DINGTALK_TOKEN"
+            local secret="$DINGTALK_SECRET"
+            if [[ -z "$token" ]]; then
+              echo "❌ DINGTALK_ACCESS_TOKEN is not set in Secrets" >&2
+              exit 1
+            fi
+            if [[ -n "$secret" ]]; then
+              local ts sign sign_url
+              ts=$(( $(date +%s) * 1000 ))
+              sign=$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64)
+              sign_url=$(printf '%s' "$sign" | jq -sRr @uri)
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}&timestamp=${ts}&sign=${sign_url}"
+            else
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}"
+            fi
+          }
+          WEBHOOK="$(build_webhook)"
+
+          curl -sS -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK" -o /tmp/dingtalk_resp.json -w "HTTP %{http_code}\n" || true
+          cat /tmp/dingtalk_resp.json || true
+
+      # (B) แจ้งเตือนเมื่อมีขั้นตอนก่อนหน้า 'ล้มเหลว' เท่านั้น
+      - name: Notify DingTalk (post-deploy - FAILED)
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          TITLE="❌ ${REPO} – Deploy Failed (main)"
+          SHORT_SHA=${SHA::7}
+          BODY="### ${TITLE}
+
+          **Repository:** ${REPO}
+          **Branch:** \`${REF_NAME}\`
+          **Triggered by:** \`${ACTOR}\`
+          **Commit:** \`${SHORT_SHA}\`
+
+          **Target:** \`${SUB_DOMAIN}\` (Domain: \`${DOMAIN}\`)
+          **PM2 Port:** \`${PORT}\`
+
+          **Run:** ${RUN_URL}
+
+          > The deployment step failed. Please check the logs in the Actions run and on the server (npm/pm2).
+          "
+
+          TITLE_JSON=$(printf '%s' "$TITLE" | jq -Rsa .)
+          BODY_JSON=$(printf '%s' "$BODY"  | jq -Rsa .)
+          PAYLOAD=$(printf '{"msgtype":"markdown","markdown":{"title":%s,"text":%s}}' "$TITLE_JSON" "$BODY_JSON")
+
+          build_webhook() {
+            local token="$DINGTALK_TOKEN"
+            local secret="$DINGTALK_SECRET"
+            if [[ -z "$token" ]]; then
+              echo "❌ DINGTALK_ACCESS_TOKEN is not set in Secrets" >&2
+              exit 1
+            fi
+            if [[ -n "$secret" ]]; then
+              local ts sign sign_url
+              ts=$(( $(date +%s) * 1000 ))
+              sign=$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64)
+              sign_url=$(printf '%s' "$sign" | jq -sRr @uri)
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}&timestamp=${ts}&sign=${sign_url}"
+            else
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}"
+            fi
+          }
+          WEBHOOK="$(build_webhook)"
+
+          curl -sS -H "Content-Type: application/json" -d "$PAYLOAD" "$WEBHOOK" -o /tmp/dingtalk_resp.json -w "HTTP %{http_code}\n" || true
+          cat /tmp/dingtalk_resp.json || true

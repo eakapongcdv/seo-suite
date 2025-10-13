@@ -2,10 +2,10 @@
   "name": "nextjs-seo-wizard",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build:local": "next build",
-    "build": "npx prisma generate && rm -rf .next && npx next build",
-    "start": "next start",
+    "dev": "next dev --turbopack",
+    "build": "npx prisma generate && rm -rf .next && npx next build --turbopack && npm run build:server",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "next build --turbopack && next start",
     "lint": "next lint"
   },
   "dependencies": {

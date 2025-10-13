@@ -14,9 +14,6 @@ export default function TopAdsKeywordsSection({ projectId, page }: Props) {
   const fetchedAt = page.topKeywordFetchedAt
     ? new Date(page.topKeywordFetchedAt as any).toLocaleString()
     : null;
-
-    return (<></>);
-    /*
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-3">
         <div className="mb-2 flex items-center justify-between">
@@ -64,5 +61,4 @@ export default function TopAdsKeywordsSection({ projectId, page }: Props) {
         )}
       </div>
     );
-    */
   }

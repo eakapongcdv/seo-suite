@@ -1,0 +1,219 @@
+# Combined workflow: PR open/update + review status + closed/merged → DingTalk (signature like the working test pipeline)
+name: PR Notifications to DingTalk.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      # DingTalk (set in repo Secrets)
+      DINGTALK_TOKEN: ${{ secrets.DINGTALK_ACCESS_TOKEN }}
+      DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+
+      # Common PR context
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      ACTION: ${{ github.event.action }}
+      EVENT_NAME: ${{ github.event_name }}
+
+    steps:
+      # ========= 1) PR opened/reopened/synchronize =========
+      - name: 🔔 DingTalk — PR Opened/Updated
+        if: >
+          github.event_name == 'pull_request' &&
+          (github.event.action == 'opened' ||
+           github.event.action == 'reopened' ||
+           github.event.action == 'synchronize')
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          case "${ACTION}" in
+            opened|reopened) TITLE="🚀 New Pull Request — ${REPO}" ;;
+            synchronize)     TITLE="🔄 Pull Request Updated — ${REPO}" ;;
+            *)               TITLE="ℹ️ Pull Request Update — ${REPO}" ;;
+          esac
+
+          TEXT="### ${TITLE}
+
+          **Repository:** ${REPO}
+
+          **PR #${PR_NUMBER}:** ${PR_TITLE}
+
+          **Author:** ${PR_AUTHOR}
+
+          **Branch:** \`${HEAD_REF}\` → \`${BASE_REF}\`
+
+          **URL:** [View Pull Request](${PR_URL})"
+
+          # JSON-escape safely with jq (like test pipeline)
+          TITLE_JSON=$(printf '%s' "$TITLE" | jq -Rsa .)
+          TEXT_JSON=$(printf '%s' "$TEXT" | jq -Rsa .)
+          PAYLOAD=$(printf '{"msgtype":"markdown","markdown":{"title":%s,"text":%s}}' "$TITLE_JSON" "$TEXT_JSON")
+
+          # Build webhook (supports signature) — same method as test pipeline
+          build_webhook() {
+            local token="$DINGTALK_TOKEN"
+            local secret="$DINGTALK_SECRET"
+            if [[ -z "$token" ]]; then
+              echo "❌ DINGTALK_ACCESS_TOKEN is not set in Secrets" >&2
+              exit 1
+            fi
+            if [[ -n "$secret" ]]; then
+              local ts sign sign_url
+              ts=$(( $(date +%s) * 1000 ))
+              # newline-safe signing
+              sign=$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64)
+              sign_url=$(printf '%s' "$sign" | jq -sRr @uri)
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}&timestamp=${ts}&sign=${sign_url}"
+            else
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}"
+            fi
+          }
+          WEBHOOK="$(build_webhook)"
+
+          echo "📤 Sending to DingTalk..."
+          HTTP_CODE=$(curl -sS -o /tmp/dingtalk_resp.json -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK" || true)
+          echo "🔎 HTTP: $HTTP_CODE"
+          echo "📨 Response:" && cat /tmp/dingtalk_resp.json || true
+
+      # ========= 2) PR review submitted (approved / changes requested) =========
+      - name: 🔔 DingTalk — PR Review Submitted
+        if: >
+          github.event_name == 'pull_request_review' &&
+          (github.event.review.state == 'approved' ||
+           github.event.review.state == 'changes_requested')
+        env:
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEWER: ${{ github.event.review.user.login }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ "${REVIEW_STATE}" == "approved" ]]; then
+            TITLE="👍 Pull Request Approved — ${REPO}"
+            MESSAGE="**Approved by:** ${REVIEWER}"
+          else
+            TITLE="⚠️ Changes Requested — ${REPO}"
+            MESSAGE="**Reviewer:** ${REVIEWER}"
+          fi
+
+          TEXT="### ${TITLE}
+
+          **Repository:** ${REPO}
+
+          **PR #${PR_NUMBER}:** ${PR_TITLE}
+
+          ${MESSAGE}
+
+          **Branch:** \`${HEAD_REF}\` → \`${BASE_REF}\`
+
+          **URL:** [View Pull Request](${PR_URL})"
+
+          TITLE_JSON=$(printf '%s' "$TITLE" | jq -Rsa .)
+          TEXT_JSON=$(printf '%s' "$TEXT" | jq -Rsa .)
+          PAYLOAD=$(printf '{"msgtype":"markdown","markdown":{"title":%s,"text":%s}}' "$TITLE_JSON" "$TEXT_JSON")
+
+          build_webhook() {
+            local token="$DINGTALK_TOKEN"
+            local secret="$DINGTALK_SECRET"
+            if [[ -z "$token" ]]; then
+              echo "❌ DINGTALK_ACCESS_TOKEN is not set in Secrets" >&2
+              exit 1
+            fi
+            if [[ -n "$secret" ]]; then
+              local ts sign sign_url
+              ts=$(( $(date +%s) * 1000 ))
+              sign=$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64)
+              sign_url=$(printf '%s' "$sign" | jq -sRr @uri)
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}&timestamp=${ts}&sign=${sign_url}"
+            else
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}"
+            fi
+          }
+          WEBHOOK="$(build_webhook)"
+
+          echo "📤 Sending to DingTalk..."
+          HTTP_CODE=$(curl -sS -o /tmp/dingtalk_resp.json -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK" || true)
+          echo "🔎 HTTP: $HTTP_CODE"
+          echo "📨 Response:" && cat /tmp/dingtalk_resp.json || true
+
+      # ========= 3) PR closed (merged or just closed) =========
+      - name: 🔔 DingTalk — PR Closed/Merged
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.action == 'closed'
+        env:
+          MERGED: ${{ github.event.pull_request.merged }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          CLOSED_BY: ${{ github.event.sender.login }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ "${MERGED}" == "true" ]]; then
+            TITLE="✅ Pull Request Merged — ${REPO}"
+            MESSAGE="**Merged by:** ${MERGED_BY}"
+          else
+            TITLE="❌ Pull Request Closed — ${REPO}"
+            MESSAGE="**Closed by:** ${CLOSED_BY}"
+          fi
+
+          TEXT="### ${TITLE}
+
+          **Repository:** ${REPO}
+
+          **PR #${PR_NUMBER}:** ${PR_TITLE}
+
+          ${MESSAGE}
+
+          **Branch:** \`${HEAD_REF}\` → \`${BASE_REF}\`
+
+          **URL:** [View Pull Request](${PR_URL})"
+
+          TITLE_JSON=$(printf '%s' "$TITLE" | jq -Rsa .)
+          TEXT_JSON=$(printf '%s' "$TEXT" | jq -Rsa .)
+          PAYLOAD=$(printf '{"msgtype":"markdown","markdown":{"title":%s,"text":%s}}' "$TITLE_JSON" "$TEXT_JSON")
+
+          build_webhook() {
+            local token="$DINGTALK_TOKEN"
+            local secret="$DINGTALK_SECRET"
+            if [[ -z "$token" ]]; then
+              echo "❌ DINGTALK_ACCESS_TOKEN is not set in Secrets" >&2
+              exit 1
+            fi
+            if [[ -n "$secret" ]]; then
+              local ts sign sign_url
+              ts=$(( $(date +%s) * 1000 ))
+              sign=$(printf '%s\n%s' "$ts" "$secret" | openssl dgst -sha256 -hmac "$secret" -binary | base64)
+              sign_url=$(printf '%s' "$sign" | jq -sRr @uri)
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}&timestamp=${ts}&sign=${sign_url}"
+            else
+              echo "https://oapi.dingtalk.com/robot/send?access_token=${token}"
+            fi
+          }
+          WEBHOOK="$(build_webhook)"
+
+          echo "📤 Sending to DingTalk..."
+          HTTP_CODE=$(curl -sS -o /tmp/dingtalk_resp.json -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK" || true)
+          echo "🔎 HTTP: $HTTP_CODE"
+          echo "📨 Response:" && cat /tmp/dingtalk_resp.json || true
