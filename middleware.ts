@@ -1,11 +1,11 @@
-/* middleware.ts
+/* middleware.ts*/
 export { auth as middleware } from "@/lib/auth";
 
 export const config = {
   matcher: ["/app/:path*"],
 };
-*/
 
+/*
 // middleware.ts (เวอร์ชัน debug)
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
@@ -34,3 +34,4 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = { matcher: ["/app/:path*"] };
+*/
