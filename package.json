@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "npx prisma generate && rm -rf .next && npx next build --turbopack && npm run build:server",
+    "build": "npx prisma generate && rm -rf .next && next build --turbopack && npm run build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "next build --turbopack && next start",
     "lint": "next lint"
