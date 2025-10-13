@@ -112,9 +112,9 @@ jobs:
             echo "cd $PROJ_DIR"
             cd "$PROJ_DIR"
 
-            echo "==> npm ci (include devDeps) && disable husky"
+            echo "==> npm i --force && disable husky"
             export HUSKY=0
-            npm ci
+            npm i --force
 
             # ถ้ามี playwright ในโปรเจกต์ ให้ติดตั้ง Chromium (กันพังถ้าไม่มี)
             if npm ls playwright --depth=0 >/dev/null 2>&1; then
