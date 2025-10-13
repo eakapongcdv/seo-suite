@@ -309,8 +309,8 @@ export async function fetchAvgMonthlySearches(
 
     const requested = new Set(seedKeywords.map((k) => k.toLowerCase()));
     return ideas
-      .filter((r) => requested.has(r.keyword.toLowerCase()))
-      .sort((a, b) => b.avgMonthlySearches - a.avgMonthlySearches);
+      .filter((r: { keyword: string; }) => requested.has(r.keyword.toLowerCase()))
+      .sort((a: { avgMonthlySearches: number; }, b: { avgMonthlySearches: number; }) => b.avgMonthlySearches - a.avgMonthlySearches);
   } catch (e: any) {
     // If INVALID_VALUE, try a one-shot fallback (EN + ascii seed) to distinguish param vs. account restriction
     let bodyObj: any = null;
@@ -354,8 +354,8 @@ export async function fetchAvgMonthlySearches(
 
         const requested2 = new Set(seedsEN.map((k) => k.toLowerCase()));
         return ideas2
-          .filter((r) => requested2.has(r.keyword.toLowerCase()))
-          .sort((a, b) => b.avgMonthlySearches - a.avgMonthlySearches);
+          .filter((r: { keyword: string; }) => requested2.has(r.keyword.toLowerCase()))
+          .sort((a: { avgMonthlySearches: number; }, b: { avgMonthlySearches: number; }) => b.avgMonthlySearches - a.avgMonthlySearches);
       } catch (e2: any) {
         console.error("[KWIDEA][FALLBACK][FAIL]", {
           message: e2?.message,
