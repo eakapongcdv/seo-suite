@@ -99,7 +99,7 @@ jobs:
         with:
           host: ${{ env.SSH_HOST }}
           username: ${{ env.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}   # plaintext OpenSSH key (not base64)
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script_stop: true
           timeout: 2m
@@ -112,14 +112,22 @@ jobs:
             echo "cd $PROJ_DIR"
             cd "$PROJ_DIR"
 
-            echo "npm ci (prod only, ignore lifecycle scripts & disable husky)"
+            echo "==> npm ci (include devDeps) && disable husky"
             export HUSKY=0
-            npm ci --omit=dev --ignore-scripts
+            npm ci
 
-            # Rebuild native deps if any (no scripts)
+            # ถ้ามี playwright ในโปรเจกต์ ให้ติดตั้ง Chromium (กันพังถ้าไม่มี)
+            if npm ls playwright --depth=0 >/dev/null 2>&1; then
+              echo "==> npx playwright install chromium"
+              npx playwright install chromium
+            else
+              echo "skip playwright install (package not found)"
+            fi
+
+            echo "==> npm rebuild (native deps, no audit/fund)"
             npm rebuild --no-fund --no-audit || true
 
-            echo "npm run build"
+            echo "==> npm run build"
             npm run build
 
             if ! command -v pm2 >/dev/null 2>&1; then
