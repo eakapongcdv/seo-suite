@@ -131,7 +131,7 @@ jobs:
             npm run build
 
             if ! command -v pm2 >/dev/null 2>&1; then
-              npm i -g pm2
+              npm i --force -g pm2
             fi
 
             # Write ecosystem.config.cjs safely (no heredoc)
