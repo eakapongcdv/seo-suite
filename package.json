@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "npx prisma generate && rm -rf .next && next build && npm run build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "next build && next start",
