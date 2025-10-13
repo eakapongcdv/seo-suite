@@ -1,9 +1,9 @@
+// app/app/projects/[projectid]/integrations/actions.ts
 "use server";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
-import { getGoogleAdsClientForProject, fetchAvgMonthlySearches } from "@/lib/googleAds";
 
 export type IntegrationTypeLiteral = "GSC" | "FIGMA" | "RANK_API";
 
@@ -342,10 +342,12 @@ export async function testRankApiGoogle(formData: FormData) {
   await ensureOwner(projectId);
 
   const kwSample = ["ไอโฟน"]; // หรือ "iphone 17 pro max"
-  const kwOptions = {
+
+  // ✅ ใช้ array ปกติ (mutable) เพื่อให้ตรงกับ signature ใน lib
+  const kwOptions: { language_code: "th"; geo_target_constants: string[] } = {
     language_code: "th",
     geo_target_constants: ["geoTargetConstants/2764"], // Thailand
-  } as const;
+  };
 
   const startedAt = new Date();
   console.groupCollapsed(`[RANK_API][TEST][${projectId}] start ${startedAt.toISOString()}`);
@@ -407,20 +409,6 @@ export async function testRankApiGoogle(formData: FormData) {
       console.log("[RANK_API][TEST] Keyword Ideas OK (developer token มีสิทธิ์ใช้)");
     } catch (inner) {
       const msgPretty = prettyGoogleAdsError(inner);
-      const msgSlim = extractGoogleAdsError(inner);
-
-      console.warn("[RANK_API][TEST] Keyword Ideas RESTRICTED", {
-        msgPretty,
-        msgSlim,
-        name: inner?.name,
-        code: inner?.code,
-        status: inner?.status,
-        request_id:
-          inner?.meta?.request_id ||
-          inner?.response?.data?.request_id ||
-          inner?.request_id ||
-          null,
-      });
 
       await prisma.projectIntegration.update({
         where: { projectId_type: { projectId, type: "RANK_API" } },
@@ -453,24 +441,7 @@ export async function testRankApiGoogle(formData: FormData) {
     revalidatePath(`/app/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (err) {
-    const finishedAt = new Date();
     const msgPretty = prettyGoogleAdsError(err);
-    const msgSlim = extractGoogleAdsError(err);
-
-    console.error("[RANK_API][TEST] FAILED", {
-      duration_ms: finishedAt.getTime() - startedAt.getTime(),
-      msgPretty,
-      msgSlim,
-      name: err?.name,
-      code: err?.code,
-      status: err?.status,
-      request_id:
-        err?.meta?.request_id ||
-        err?.response?.data?.request_id ||
-        err?.request_id ||
-        null,
-      stack: err?.stack,
-    });
 
     await prisma.projectIntegration.upsert({
       where: { projectId_type: { projectId, type: "RANK_API" } },

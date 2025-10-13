@@ -1,5 +1,5 @@
 {
-  "name": "nextjs-seo-wizard",
+  "name": "seo-suite",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
@@ -18,10 +18,11 @@
     "lighthouse": "^12.8.2",
     "lucide-react": "^0.308.0",
     "next": "14.2.3",
-    "next-auth": "5.0.0-beta.20",
+    "next-auth": "5.0.0-beta.29",
     "openai": "^6.1.0",
+    "playwright": "^1.56.0",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "react-dom": "19.2.0",
     "react-hook-form": "^7.51.3",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
@@ -34,11 +35,10 @@
     "@types/node": "24.6.2",
     "@types/react": "19.2.0",
     "@types/react-dom": "^19.2.0",
-    "autoprefixer": "^10.4.18",
-    "playwright-core": "^1.55.1",
-    "postcss": "^8.4.35",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
     "prisma": "^6.16.3",
-    "tailwindcss": "^4.1.14",
+    "tailwindcss": "^3.4.14",
     "typescript": "^5.3.3"
   }
 }
