@@ -9,31 +9,10 @@ export async function middleware(req: NextRequest) {
   // ปล่อยทุกอย่างที่ไม่ใช่ /app/**
   if (!pathname.startsWith("/app")) return NextResponse.next();
 
-  // ===== ค่าเดียวกับที่ใช้ใน lib/auth.ts =====
-  const AUTH_URL = process.env.AUTH_URL ?? "";
-  const COOKIE_SECURE = AUTH_URL.startsWith("https");
-  // ชื่อคุกกี้ต้องตรงกับ lib/auth.ts (ดู cookies.sessionToken.name)
-  const COOKIE_NAME = COOKIE_SECURE
-    ? "__Secure-authjs.session-token"
-    : "authjs.session-token";
-  // ==============================================
-
-  // รองรับทั้ง v5 และ v4 (fallback NEXTAUTH_SECRET)
-  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "";
-  const salt = process.env.AUTH_COOKIE_SALT ?? "authjs.session-token"; // v5 ต้องมี salt (มี default แล้ว)
-
-  if (!secret) {
-    console.error("[middleware] Missing AUTH_SECRET (or NEXTAUTH_SECRET)");
-    // ไม่ return ทันที เพื่อไม่ขวางระบบ; แต่ควรเซ็ตให้ถูกใน env นะครับ
-  }
-
-  // อ่านโทเค็นจากคุกกี้ให้ตรงเงื่อนไขโปรโตคอล/ชื่อคุกกี้
+  // ปล่อยให้ next-auth ตีความคุกกี้/โปรโตคอลเอง (จาก X-Forwarded-* ที่ nginx ใส่ให้แล้ว)
   const token = await getToken({
     req,
-    secret,
-    salt,
-    cookieName: COOKIE_NAME,
-    secureCookie: COOKIE_SECURE,
+    secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
   });
 
   // ยังไม่ล็อกอิน → ส่งไปหน้า /signin พร้อม callbackUrl
